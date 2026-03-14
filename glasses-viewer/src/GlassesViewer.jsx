@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as THREE from "three";
+import ImpactPage from "./ImpactPage";
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
@@ -200,6 +201,7 @@ export default function GlassesViewer() {
 
   /* UI state */
   const [menuOpen, setMenuOpen] = useState(false);
+  const [page, setPage] = useState("configurator");
   const [loaded, setLoaded] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [introPlayed, setIntroPlayed] = useState(false);
@@ -425,9 +427,9 @@ export default function GlassesViewer() {
           </div>
           <div className="gv-nav-links">
             {[
-              { label: "Configurator", action: () => setStep(0), active: true },
+              { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
               { label: "AI Fit Scanner", action: null, soon: true },
-              { label: "Our Impact", action: null, soon: true },
+              { label: "Our Impact", action: () => { setPage("impact"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "impact" },
               { label: "How It Works", action: null, soon: true },
             ].map(item => (
               <button key={item.label} className="gv-nav-link" onClick={item.action || undefined}
@@ -443,9 +445,11 @@ export default function GlassesViewer() {
         </div>
         {menuOpen && (
           <div style={{ display: "flex", flexDirection: "column", padding: "8px 24px 16px", gap: 4, borderTop: "1px solid rgba(255,255,255,0.06)", animation: "gvFadeUp 0.3s ease both" }}>
-            <button onClick={() => { setStep(0); setMenuOpen(false); }}
-              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: 1 }}>Configurator</button>
-            {["AI Fit Scanner", "Our Impact", "How It Works"].map(s => (
+            <button onClick={() => { setPage("configurator"); setStep(0); setMenuOpen(false); }}
+              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "configurator" ? 1 : 0.5 }}>Configurator</button>
+            <button onClick={() => { setPage("impact"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "impact" ? 1 : 0.5 }}>Our Impact</button>
+            {["AI Fit Scanner", "How It Works"].map(s => (
               <div key={s} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0" }}>
                 <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, letterSpacing: 1, textTransform: "uppercase", opacity: 0.35 }}>{s}</span>
                 <span style={{ fontSize: 8, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)", letterSpacing: 1, opacity: 0.4 }}>SOON</span>
@@ -456,7 +460,7 @@ export default function GlassesViewer() {
       </nav>
 
       {/* MAIN */}
-      <div className="gv-main" style={{ flex: 1, maxWidth: 1200, width: "100%", margin: "0 auto", padding: "24px 24px", display: "flex", gap: 40, alignItems: "flex-start", flexWrap: "wrap", position: "relative", zIndex: 2, boxSizing: "border-box" }}>
+      <div className="gv-main" style={{ flex: 1, maxWidth: 1200, width: "100%", margin: "0 auto", padding: "24px 24px", display: page === "configurator" ? "flex" : "none", gap: 40, alignItems: "flex-start", flexWrap: "wrap", position: "relative", zIndex: 2, boxSizing: "border-box" }}>
 
         {/* 3D VIEWPORT */}
         <div style={{ flex: "1 1 480px", minWidth: 320, position: "relative" }}>
@@ -754,6 +758,13 @@ export default function GlassesViewer() {
           </div>
         </div>
       </div>
+
+      {/* IMPACT PAGE */}
+      {page === "impact" && (
+        <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%", display: "flex", justifyContent: "center" }}>
+          <ImpactPage />
+        </div>
+      )}
 
       <footer style={{ padding: 20, textAlign: "center", fontSize: 10, letterSpacing: 3, opacity: 0.2, textTransform: "uppercase", display: "flex", gap: 16, justifyContent: "center", borderTop: "1px solid rgba(255,255,255,0.03)", marginTop: "auto", position: "relative", zIndex: 2 }}>
         <span>OPTIQ © 2026</span><span>·</span><span>Recycled eyewear, 3D printed for you</span>
