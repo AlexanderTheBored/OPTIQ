@@ -761,7 +761,7 @@ export default function GlassesViewer() {
 
       {/* IMPACT PAGE */}
       {page === "impact" && (
-        <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%", display: "flex", justifyContent: "center" }}>
+        <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}>
           <ImpactPage />
         </div>
       )}

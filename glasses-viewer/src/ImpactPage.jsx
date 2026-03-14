@@ -168,7 +168,7 @@ export default function ImpactPage() {
       </section>
 
       {/* ═══ THE BIGGER PICTURE ═══ */}
-      <section style={{ marginBottom: 80 }}>
+      <section style={{ marginBottom: 80, textAlign: "left" }}>
         <AnimatedContent>
           <p style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: 0.3, marginBottom: 12, fontWeight: 600 }}>
             The Bigger Picture
@@ -199,7 +199,7 @@ export default function ImpactPage() {
       </section>
 
       {/* ═══ COST COMPARISON ═══ */}
-      <section style={{ marginBottom: 80 }}>
+      <section style={{ marginBottom: 80, textAlign: "left" }}>
         <AnimatedContent>
           <p style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: 0.3, marginBottom: 12, fontWeight: 600 }}>
             Cost Breakdown
@@ -261,7 +261,7 @@ export default function ImpactPage() {
       </section>
 
       {/* ═══ PROCESS TIMELINE ═══ */}
-      <section style={{ marginBottom: 80 }}>
+      <section style={{ marginBottom: 80, textAlign: "left" }}>
         <AnimatedContent>
           <p style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: 0.3, marginBottom: 12, fontWeight: 600 }}>
             From Waste to Wear
@@ -301,7 +301,7 @@ export default function ImpactPage() {
       </section>
 
       {/* ═══ COMMUNITY IMPACT ═══ */}
-      <section style={{ marginBottom: 80 }}>
+      <section style={{ marginBottom: 80, textAlign: "left" }}>
         <AnimatedContent>
           <p style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: 0.3, marginBottom: 12, fontWeight: 600 }}>
             Community Impact
