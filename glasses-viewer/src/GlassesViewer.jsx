@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as THREE from "three";
 import ImpactPage from "./ImpactPage";
+import FitScanner from "./FitScanner";
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
@@ -41,6 +42,9 @@ const SIZES = [
   { id: "lg", name: "Large", fit: "Wide face", width: "142mm" },
 ];
 
+/* ═══════════════════════════════════════════════════════════
+   PART LABELS
+   ═══════════════════════════════════════════════════════════ */
 const PART_INFO = {
   "left-rim": { label: "Frame Rim", detail: "3D printed, 0.8mm" }, "right-rim": { label: "Frame Rim", detail: "3D printed, 0.8mm" },
   "left-lens": { label: "Lens", detail: "Polycarbonate" }, "right-lens": { label: "Lens", detail: "Polycarbonate" },
@@ -62,6 +66,9 @@ const EXPLODE_DIR = {
 const LABEL_PARTS = ["right-lens","bridge","right-temple","right-hinge","right-pad"];
 const LABEL_PARTS_W = ["right-lens","bridge","right-temple","right-hinge","right-pad","top-bar"];
 
+/* ═══════════════════════════════════════════════════════════
+   FRAMES
+   ═══════════════════════════════════════════════════════════ */
 const FRAMES = [
   { id:"aviator", name:"Aviator Classic", category:"Sunglasses", basePrice:12, tagline:"Born to fly", labelParts:LABEL_PARTS,
     dimensions:{lens:"58mm",bridge:"14mm",temple:"140mm",height:"50mm"},
@@ -153,8 +160,16 @@ function buildCatEye(color,matPbr){
    ═══════════════════════════════════════════════════════════ */
 function useParticles(ref,c){const cr=useRef(c);cr.current=c;useEffect(()=>{const cv=ref.current;if(!cv)return;const ctx=cv.getContext("2d");let w,h;const rs=()=>{w=cv.width=window.innerWidth;h=cv.height=window.innerHeight};rs();window.addEventListener("resize",rs);const P=[];for(let i=0;i<50;i++)P.push({x:Math.random()*2000,y:Math.random()*2000,vx:(Math.random()-0.5)*0.3,vy:-Math.random()*0.35-0.1,r:Math.random()*2.5+0.5,a:Math.random()*0.4+0.08,p:Math.random()*Math.PI*2});let raf;const draw=()=>{raf=requestAnimationFrame(draw);ctx.clearRect(0,0,w,h);P.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.p+=0.015;if(p.y<-10){p.y=h+10;p.x=Math.random()*w;}if(p.x<-10)p.x=w+10;if(p.x>w+10)p.x=-10;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=cr.current;ctx.globalAlpha=p.a*(0.5+0.5*Math.sin(p.p));ctx.fill();});ctx.globalAlpha=1;};draw();return()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",rs);};},[ref]);}
 
+/* ═══════════════════════════════════════════════════════════
+   STEP INDICATOR
+   ═══════════════════════════════════════════════════════════ */
 const STEPS = ["Frame","Material","Lens","Colour","Size","Summary"];
 
+/* step names for reference */
+
+/* ═══════════════════════════════════════════════════════════
+   OPTION CARD (reusable)
+   ═══════════════════════════════════════════════════════════ */
 function OptCard({ selected, onClick, children, style = {} }) {
   return (
     <button className="gv-frame-card" onClick={onClick} style={{
@@ -177,6 +192,7 @@ export default function GlassesViewer() {
   const sceneRef = useRef({});
   const particleCanvasRef = useRef(null);
 
+  /* configurator state */
   const [step, setStep] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
   const [matIdx, setMatIdx] = useState(0);
@@ -184,6 +200,7 @@ export default function GlassesViewer() {
   const [colorIdx, setColorIdx] = useState(0);
   const [sizeIdx, setSizeIdx] = useState(1);
 
+  /* UI state */
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState("configurator");
   const [loaded, setLoaded] = useState(false);
@@ -191,8 +208,6 @@ export default function GlassesViewer() {
   const [introPlayed, setIntroPlayed] = useState(false);
   const [exploded, setExploded] = useState(false);
   const [labelPositions, setLabelPositions] = useState([]);
-
-  const isConfigurator = page === "configurator";
 
   const frame = FRAMES[frameIdx];
   const color = frame.colors[colorIdx];
@@ -204,17 +219,18 @@ export default function GlassesViewer() {
 
   useParticles(particleCanvasRef, color.particle);
 
-  const buildGlasses = useCallback((fIdx, cIdx, mIdx, doAnimate = true) => {
+  /* ── build glasses ── */
+  const buildGlasses = useCallback((fIdx, cIdx, mIdx, animate = true) => {
     const { scene, state } = sceneRef.current; if (!scene) return;
     const oldG = sceneRef.current.glasses;
     const f = FRAMES[fIdx], c = f.colors[cIdx], mt = MATERIALS[mIdx];
     const glasses = f.build(c, mt.pbr);
     glasses.rotation.set(deg(8), deg(-25), 0);
-    if (doAnimate) glasses.scale.setScalar(0.01);
+    if (animate) glasses.scale.setScalar(0.01);
     scene.add(glasses);
     sceneRef.current.glasses = glasses;
     if (state) { state.targetRotX = deg(8); state.targetRotY = deg(-25); }
-    if (doAnimate) {
+    if (animate) {
       let t = 0;
       const swap = setInterval(() => {
         t += 0.04;
@@ -227,6 +243,7 @@ export default function GlassesViewer() {
     }
   }, []);
 
+  /* ── apply material/colour/lens changes in-place ── */
   const applyMaterials = useCallback(() => {
     const glasses = sceneRef.current.glasses; if (!glasses) return;
     const c = FRAMES[frameIdx].colors[colorIdx];
@@ -251,6 +268,7 @@ export default function GlassesViewer() {
     });
   }, [frameIdx, colorIdx, matIdx, lensIdx]);
 
+  /* ── exploded view ── */
   useEffect(() => {
     const glasses = sceneRef.current.glasses; const camera = sceneRef.current.camera;
     if (!glasses || !camera) return;
@@ -273,6 +291,7 @@ export default function GlassesViewer() {
     return () => clearInterval(id);
   }, [exploded]);
 
+  /* ── label projection ── */
   useEffect(() => {
     if (!exploded) { setLabelPositions([]); return; }
     const update = () => {
@@ -326,8 +345,8 @@ export default function GlassesViewer() {
     canvas.addEventListener("pointerdown", onDown); window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp); canvas.addEventListener("wheel", onWheel, { passive: false });
     let raf;
-    const animateLoop = () => {
-      raf = requestAnimationFrame(animateLoop);
+    const animate = () => {
+      raf = requestAnimationFrame(animate);
       const glasses = sceneRef.current.glasses; if (!glasses) return;
       if (state.introT < 1) { state.introT += 0.012; camera.position.z = lerp(4.5, 2.8, 1 - Math.pow(1 - Math.min(state.introT, 1), 4)); }
       if (!state.isDragging) { state.velX *= 0.92; state.velY *= 0.92; state.targetRotY += state.velX; state.targetRotX += state.velY; }
@@ -338,12 +357,13 @@ export default function GlassesViewer() {
       camera.position.y = lerp(camera.position.y, 0.15 - state.mouseNY * 0.06, 0.05);
       camera.lookAt(0, 0, 0); renderer.render(scene, camera);
     };
-    animateLoop();
-    const onResize = () => { const w = mount.clientWidth, h = mount.clientHeight; if (w > 0 && h > 0) { renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); } };
+    animate();
+    const onResize = () => { const w = mount.clientWidth, h = mount.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); };
     window.addEventListener("resize", onResize);
     return () => { cancelAnimationFrame(raf); canvas.removeEventListener("pointerdown", onDown); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); canvas.removeEventListener("wheel", onWheel); window.removeEventListener("resize", onResize); if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement); renderer.dispose(); };
   }, [buildGlasses]);
 
+  /* ── reactivity: frame change = animated rebuild, everything else = instant ── */
   const prevFrameRef = useRef(0);
   useEffect(() => {
     if (!sceneRef.current.scene || !introPlayed) return;
@@ -354,6 +374,7 @@ export default function GlassesViewer() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameIdx, colorIdx, matIdx, lensIdx]);
 
+  /* ── inject CSS ── */
   useEffect(() => {
     const id = "gv-styles"; if (document.getElementById(id)) return;
     const s = document.createElement("style"); s.id = id;
@@ -362,6 +383,7 @@ export default function GlassesViewer() {
       @keyframes gvFadeIn { from { opacity:0 } to { opacity:1 } }
       @keyframes gvSlideIn { from { opacity:0; transform:translateX(20px) } to { opacity:1; transform:translateX(0) } }
       @keyframes gvShine { 0% { left:-100% } 100% { left:200% } }
+      @keyframes gvSpin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
       @keyframes gvLabelIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
       .gv-nav-links { display: flex; gap: 32px; }
       .gv-hamburger { display: none !important; }
@@ -403,11 +425,12 @@ export default function GlassesViewer() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 22, opacity: 0.9 }}>◈</span>
             <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 600, letterSpacing: 4 }}>OPTIQ</span>
+            <span style={{ fontSize: 9, opacity: 0.3, letterSpacing: 2, textTransform: "uppercase", marginLeft: 8, padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.1)" }}>Configurator</span>
           </div>
           <div className="gv-nav-links">
             {[
-              { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: isConfigurator },
-              { label: "AI Fit Scanner", action: null, soon: true },
+              { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
+              { label: "AI Fit Scanner", action: () => { setPage("scanner"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
               { label: "Our Impact", action: () => { setPage("impact"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "impact" },
               { label: "How It Works", action: null, soon: true },
             ].map(item => (
@@ -425,36 +448,27 @@ export default function GlassesViewer() {
         {menuOpen && (
           <div style={{ display: "flex", flexDirection: "column", padding: "8px 24px 16px", gap: 4, borderTop: "1px solid rgba(255,255,255,0.06)", animation: "gvFadeUp 0.3s ease both" }}>
             <button onClick={() => { setPage("configurator"); setStep(0); setMenuOpen(false); }}
-              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: isConfigurator ? 1 : 0.5 }}>Configurator</button>
+              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "configurator" ? 1 : 0.5 }}>Configurator</button>
+            <button onClick={() => { setPage("scanner"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "scanner" ? 1 : 0.5 }}>AI Fit Scanner</button>
             <button onClick={() => { setPage("impact"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
               style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "impact" ? 1 : 0.5 }}>Our Impact</button>
-            {["AI Fit Scanner", "How It Works"].map(s => (
-              <div key={s} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0" }}>
-                <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, letterSpacing: 1, textTransform: "uppercase", opacity: 0.35 }}>{s}</span>
-                <span style={{ fontSize: 8, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)", letterSpacing: 1, opacity: 0.4 }}>SOON</span>
-              </div>
-            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0" }}>
+              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, letterSpacing: 1, textTransform: "uppercase", opacity: 0.35 }}>How It Works</span>
+              <span style={{ fontSize: 8, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)", letterSpacing: 1, opacity: 0.4 }}>SOON</span>
+            </div>
           </div>
         )}
       </nav>
 
-      {/* MAIN — uses visibility instead of display:none so Three.js keeps real dimensions */}
-      <div className="gv-main" style={{
-        flex: isConfigurator ? 1 : "none",
-        maxWidth: 1200, width: "100%", margin: "0 auto", padding: "24px 24px",
-        display: "flex", gap: 40, alignItems: "flex-start", flexWrap: "wrap",
-        position: isConfigurator ? "relative" : "absolute",
-        zIndex: 2, boxSizing: "border-box",
-        visibility: isConfigurator ? "visible" : "hidden",
-        pointerEvents: isConfigurator ? "auto" : "none",
-        height: isConfigurator ? "auto" : 0,
-        overflow: isConfigurator ? "visible" : "hidden",
-      }}>
+      {/* MAIN */}
+      <div className="gv-main" style={{ flex: 1, maxWidth: 1200, width: "100%", margin: "0 auto", padding: "24px 24px", display: page === "configurator" ? "flex" : "none", gap: 40, alignItems: "flex-start", flexWrap: "wrap", position: "relative", zIndex: 2, boxSizing: "border-box" }}>
 
         {/* 3D VIEWPORT */}
         <div style={{ flex: "1 1 480px", minWidth: 320, position: "relative" }}>
           <div style={{ position: "relative" }}>
             <div ref={mountRef} style={{ width: "100%", aspectRatio: "4 / 3", borderRadius: 20, overflow: "hidden", cursor: "grab", opacity: loaded ? 1 : 0, transition: "opacity 1.2s cubic-bezier(0.4,0,0.2,1)", boxShadow: "0 0 80px rgba(0,0,0,0.3)" }} />
+            {/* labels */}
             {exploded && labelPositions.length > 0 && (
               <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}>
                 {labelPositions.map((lp, i) => {
@@ -486,6 +500,7 @@ export default function GlassesViewer() {
           </div>
           <p style={{ textAlign: "center", fontSize: 10, opacity: 0.2, marginTop: 8, letterSpacing: 1 }}>Drag to rotate · Scroll to zoom</p>
 
+          {/* LIVE PRICE TICKER */}
           <div style={{ marginTop: 20, padding: "16px 20px", borderRadius: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <p style={{ margin: 0, fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Your Build</p>
@@ -501,6 +516,7 @@ export default function GlassesViewer() {
         {/* CONFIGURATOR PANEL */}
         <div style={{ flex: "1 1 340px", minWidth: 0, maxWidth: "100%", display: "flex", flexDirection: "column", paddingTop: 4 }}>
 
+          {/* compact step indicator */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, animation: "gvFadeUp 0.4s ease both" }}>
             <span style={{ fontSize: 10, opacity: 0.3, letterSpacing: 2, textTransform: "uppercase", fontWeight: 600 }}>
               Step {step + 1} of {STEPS.length}
@@ -518,6 +534,7 @@ export default function GlassesViewer() {
 
           <div key={step} style={{ animation: "gvFadeUp 0.35s ease both", flex: 1 }}>
 
+            {/* STEP 0: FRAME */}
             {step === 0 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Choose your frame</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Each frame is 3D printed from recycled materials to your exact specs.</p>
@@ -536,6 +553,7 @@ export default function GlassesViewer() {
               </div>
             </>)}
 
+            {/* STEP 1: MATERIAL */}
             {step === 1 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Pick your material</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>All materials are sourced from post-consumer waste. Zero virgin plastic.</p>
@@ -559,6 +577,7 @@ export default function GlassesViewer() {
               </div>
             </>)}
 
+            {/* STEP 2: LENS */}
             {step === 2 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Select your lens</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>All lenses are scratch-resistant polycarbonate with UV protection.</p>
@@ -580,6 +599,7 @@ export default function GlassesViewer() {
               </div>
             </>)}
 
+            {/* STEP 3: COLOUR */}
             {step === 3 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Choose your colour</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Pigment is mixed directly into the recycled filament before printing.</p>
@@ -598,6 +618,7 @@ export default function GlassesViewer() {
               </div>
             </>)}
 
+            {/* STEP 4: SIZE */}
             {step === 4 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Select your size</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 8px" }}>3D printing means every pair can be made to measure. Pick your starting point.</p>
@@ -614,26 +635,67 @@ export default function GlassesViewer() {
                   </OptCard>
                 ))}
               </div>
+              {/* dimension diagram - matches actual 3D geometry, scales with size */}
               {(() => {
                 const sc = [0.88, 1.0, 1.1][sizeIdx];
                 const cx = 140, cy = 46;
                 const sw = size.width;
+                /* mirror helper: takes left-side x, returns right-side x */
                 const mx = (x) => cx + (cx - x);
+
                 return (
                   <div style={{ marginTop: 16, padding: "18px 14px 12px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
                     <svg viewBox="0 0 280 110" style={{ width: "100%", height: "auto", opacity: 0.4 }}>
                       <g transform={`translate(${cx},${cy}) scale(${sc}) translate(${-cx},${-cy})`}>
-                        {frame.id === "aviator" && (<><path d={`M72 20 Q105 18 110 46 Q105 78 72 80 Q39 78 34 46 Q39 18 72 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(72)} 20 Q${mx(105)} 18 ${mx(110)} 46 Q${mx(105)} 78 ${mx(72)} 80 Q${mx(39)} 78 ${mx(34)} 46 Q${mx(39)} 18 ${mx(72)} 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M110 37 Q${cx} 28 ${mx(110)} 37`} fill="none" stroke="#fff" strokeWidth="1.2" /><path d={`M110 44 Q${cx} 36 ${mx(110)} 44`} fill="none" stroke="#fff" strokeWidth="0.8" /></>)}
-                        {frame.id === "wayfarer" && (<><path d={`M36 28 L108 24 Q113 46 108 68 L36 72 Q30 46 36 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(36)} 28 L${mx(108)} 24 Q${mx(113)} 46 ${mx(108)} 68 L${mx(36)} 72 Q${mx(30)} 46 ${mx(36)} 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><rect x="28" y="20" width="224" height="6" rx="2" fill="rgba(255,255,255,0.3)" stroke="#fff" strokeWidth="0.8" /><path d={`M108 34 Q${cx} 26 ${mx(108)} 34`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        {frame.id === "round" && (<><circle cx="72" cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" /><circle cx={mx(72)} cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" /><path d={`M100 36 Q110 28 120 30 Q160 28 ${mx(100)} 36`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        {frame.id === "cat-eye" && (<><path d={`M38 52 Q36 30 52 24 Q72 18 98 20 Q112 26 110 46 Q108 68 78 74 Q50 74 38 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(38)} 52 Q${mx(36)} 30 ${mx(52)} 24 Q${mx(72)} 18 ${mx(98)} 20 Q${mx(112)} 26 ${mx(110)} 46 Q${mx(108)} 68 ${mx(78)} 74 Q${mx(50)} 74 ${mx(38)} 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M110 32 Q${cx} 24 ${mx(110)} 32`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
+
+                        {/* AVIATOR - teardrop with double bridge */}
+                        {frame.id === "aviator" && (<>
+                          <path d={`M72 20 Q105 18 110 46 Q105 78 72 80 Q39 78 34 46 Q39 18 72 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <path d={`M${mx(72)} 20 Q${mx(105)} 18 ${mx(110)} 46 Q${mx(105)} 78 ${mx(72)} 80 Q${mx(39)} 78 ${mx(34)} 46 Q${mx(39)} 18 ${mx(72)} 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <path d={`M110 37 Q${cx} 28 ${mx(110)} 37`} fill="none" stroke="#fff" strokeWidth="1.2" />
+                          <path d={`M110 44 Q${cx} 36 ${mx(110)} 44`} fill="none" stroke="#fff" strokeWidth="0.8" />
+                        </>)}
+
+                        {/* WAYFARER - angular trapezoid with thick top bar */}
+                        {frame.id === "wayfarer" && (<>
+                          <path d={`M36 28 L108 24 Q113 46 108 68 L36 72 Q30 46 36 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <path d={`M${mx(36)} 28 L${mx(108)} 24 Q${mx(113)} 46 ${mx(108)} 68 L${mx(36)} 72 Q${mx(30)} 46 ${mx(36)} 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <rect x="28" y="20" width="224" height="6" rx="2" fill="rgba(255,255,255,0.3)" stroke="#fff" strokeWidth="0.8" />
+                          <path d={`M108 34 Q${cx} 26 ${mx(108)} 34`} fill="none" stroke="#fff" strokeWidth="1.2" />
+                        </>)}
+
+                        {/* ROUND - perfect circles */}
+                        {frame.id === "round" && (<>
+                          <circle cx="72" cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" />
+                          <circle cx={mx(72)} cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" />
+                          <path d={`M100 36 Q110 28 120 30 Q160 28 ${mx(100)} 36`} fill="none" stroke="#fff" strokeWidth="1.2" />
+                        </>)}
+
+                        {/* CAT-EYE - dramatic upswept */}
+                        {frame.id === "cat-eye" && (<>
+                          <path d={`M38 52 Q36 30 52 24 Q72 18 98 20 Q112 26 110 46 Q108 68 78 74 Q50 74 38 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <path d={`M${mx(38)} 52 Q${mx(36)} 30 ${mx(52)} 24 Q${mx(72)} 18 ${mx(98)} 20 Q${mx(112)} 26 ${mx(110)} 46 Q${mx(108)} 68 ${mx(78)} 74 Q${mx(50)} 74 ${mx(38)} 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" />
+                          <path d={`M110 32 Q${cx} 24 ${mx(110)} 32`} fill="none" stroke="#fff" strokeWidth="1.2" />
+                        </>)}
+
+                        {/* temple arms (subtle, all frames) */}
                         <line x1="10" y1={cy} x2="30" y2={cy} stroke="#fff" strokeWidth="0.8" strokeLinecap="round" opacity="0.4" />
                         <line x1={mx(10)} y1={cy} x2={mx(30)} y2={cy} stroke="#fff" strokeWidth="0.8" strokeLinecap="round" opacity="0.4" />
+
                       </g>
-                      <line x1="34" y1="92" x2="110" y2="92" stroke="#fff" strokeWidth="0.6" /><line x1="34" y1="89" x2="34" y2="95" stroke="#fff" strokeWidth="0.6" /><line x1="110" y1="89" x2="110" y2="95" stroke="#fff" strokeWidth="0.6" />
+
+                      {/* measurement lines stay outside the scale group so text doesn't stretch */}
+                      {/* lens width */}
+                      <line x1="34" y1="92" x2="110" y2="92" stroke="#fff" strokeWidth="0.6" />
+                      <line x1="34" y1="89" x2="34" y2="95" stroke="#fff" strokeWidth="0.6" />
+                      <line x1="110" y1="89" x2="110" y2="95" stroke="#fff" strokeWidth="0.6" />
                       <text x="72" y="102" fill="#fff" fontSize="8" textAnchor="middle" fontFamily="DM Sans" fontWeight="500">{frame.dimensions.lens}</text>
-                      <line x1="112" y1="10" x2="168" y2="10" stroke="#fff" strokeWidth="0.6" /><line x1="112" y1="7" x2="112" y2="13" stroke="#fff" strokeWidth="0.6" /><line x1="168" y1="7" x2="168" y2="13" stroke="#fff" strokeWidth="0.6" />
+                      {/* bridge */}
+                      <line x1="112" y1="10" x2="168" y2="10" stroke="#fff" strokeWidth="0.6" />
+                      <line x1="112" y1="7" x2="112" y2="13" stroke="#fff" strokeWidth="0.6" />
+                      <line x1="168" y1="7" x2="168" y2="13" stroke="#fff" strokeWidth="0.6" />
                       <text x="140" y="8" fill="#fff" fontSize="8" textAnchor="middle" fontFamily="DM Sans" fontWeight="500">{frame.dimensions.bridge}</text>
+                      {/* total width */}
                       <text x="140" y="110" fill="#fff" fontSize="7" textAnchor="middle" fontFamily="DM Sans" opacity="0.45">total width: {sw}</text>
                     </svg>
                   </div>
@@ -641,31 +703,49 @@ export default function GlassesViewer() {
               })()}
             </>)}
 
+            {/* STEP 5: SUMMARY */}
             {step === 5 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Your custom pair</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Review your configuration before ordering.</p>
+
               <div style={{ display: "flex", flexDirection: "column", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
-                {[["Frame", frame.name, `$${frame.basePrice}`],["Material", `${material.name} (${material.tag})`, material.price === 0 ? "included" : `+$${material.price}`],["Lens", lens.name, lens.price === 0 ? "included" : `+$${lens.price}`],["Colour", color.name, "included"],["Size", `${size.name} (${size.width})`, "included"],].map(([label, value, price], i) => (
+                {[
+                  ["Frame", frame.name, `$${frame.basePrice}`],
+                  ["Material", `${material.name} (${material.tag})`, material.price === 0 ? "included" : `+$${material.price}`],
+                  ["Lens", lens.name, lens.price === 0 ? "included" : `+$${lens.price}`],
+                  ["Colour", color.name, "included"],
+                  ["Size", `${size.name} (${size.width})`, "included"],
+                ].map(([label, value, price], i) => (
                   <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: i % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)" }}>
-                    <div><span style={{ fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</span><p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 500 }}>{value}</p></div>
+                    <div>
+                      <span style={{ fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</span>
+                      <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 500 }}>{value}</p>
+                    </div>
                     <span style={{ fontSize: 13, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>{price}</span>
                   </div>
                 ))}
               </div>
+
+              {/* impact card */}
               <div style={{ padding: "16px 20px", borderRadius: 12, background: "rgba(111,207,151,0.06)", border: "1px solid rgba(111,207,151,0.15)", marginBottom: 20 }}>
                 <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 600, color: "#6fcf97", letterSpacing: 1, textTransform: "uppercase" }}>Environmental Impact</p>
-                <p style={{ margin: 0, fontSize: 13, opacity: 0.6, lineHeight: 1.6 }}>Your pair uses approximately 15g of recycled plastic, diverting ~3 bottle caps from landfill. {material.co2}.</p>
+                <p style={{ margin: 0, fontSize: 13, opacity: 0.6, lineHeight: 1.6 }}>
+                  Your pair uses approximately 15g of recycled plastic, diverting ~3 bottle caps from landfill. {material.co2}.
+                </p>
               </div>
+
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderRadius: 12, background: "rgba(255,255,255,0.06)", marginBottom: 20 }}>
                 <span style={{ fontSize: 14, fontWeight: 500 }}>Total</span>
                 <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 600 }}>${totalPrice}</span>
               </div>
+
               <button className="gv-cta" style={{ width: "100%", padding: "18px 0", background: "rgba(255,255,255,0.92)", color: "#000", border: "none", borderRadius: 12, fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer", transition: "all 0.4s cubic-bezier(0.23,1,0.32,1)" }}>
                 Order Custom Pair
               </button>
             </>)}
           </div>
 
+          {/* NAV BUTTONS */}
           <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
             {step > 0 && (
               <button className="gv-back" onClick={prevStep} style={{ flex: 1, padding: "14px 0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: 1.5, textTransform: "uppercase", cursor: "pointer", transition: "all 0.3s" }}>
@@ -685,6 +765,20 @@ export default function GlassesViewer() {
       {page === "impact" && (
         <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}>
           <ImpactPage />
+        </div>
+      )}
+
+      {/* AI FIT SCANNER */}
+      {page === "scanner" && (
+        <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}>
+          <FitScanner onApplyFit={(fIdx, sIdx) => {
+            setFrameIdx(fIdx);
+            setColorIdx(0);
+            setSizeIdx(sIdx);
+            setStep(5);
+            setPage("configurator");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }} />
         </div>
       )}
 
