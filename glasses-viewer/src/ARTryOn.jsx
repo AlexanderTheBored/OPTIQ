@@ -274,7 +274,7 @@ function extractFacePose(landmarks, vWidth, vHeight) {
   /* weighted average — eye outer is more stable than temples */
   const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
   const modelWidth = 1.92;
-  const scale = (faceW / modelWidth) * 1.0;
+  const scale = (faceW / modelWidth) * 1.3;
 
   /* ── ROLL ── (head tilt left/right) */
   /* Use eye outer corners — most stable for roll. Negate for mirror. */
