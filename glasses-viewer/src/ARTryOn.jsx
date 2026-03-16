@@ -104,62 +104,231 @@ const AR_FRAMES = [
 ];
 
 /* ═══════════════════════════════════════════════════════════
-   FACE POSE HELPERS
+   ONE EURO FILTER — the industry standard for AR tracking.
+   Adapts smoothing based on speed: responsive during fast
+   head turns, rock-solid stable when you hold still.
+   Paper: https://cristal.univ-lille.fr/~casiez/1euro/
    ═══════════════════════════════════════════════════════════ */
-const LM = { leftEyeOuter: 33, rightEyeOuter: 263, leftTemple: 234, rightTemple: 454, noseBridge: 6, foreHead: 10, chin: 152 };
-const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
-
-function dist2D(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
-
-/* smooth a value toward a target with exponential moving average */
-class Smoother {
-  constructor(alpha = 0.35) { this.alpha = alpha; this.values = {}; }
-  smooth(key, raw) {
-    if (!(key in this.values) || isNaN(this.values[key])) { this.values[key] = raw; return raw; }
-    this.values[key] += (raw - this.values[key]) * this.alpha;
-    return this.values[key];
+class LowPassFilter {
+  constructor(alpha) {
+    this.y = null;
+    this.s = null;
+    this.setAlpha(alpha);
   }
-  reset() { this.values = {}; }
+  setAlpha(alpha) {
+    this.alpha = Math.max(0.0001, Math.min(1, alpha));
+  }
+  filter(value) {
+    if (this.y === null) {
+      this.s = value;
+    } else {
+      this.s = this.alpha * value + (1 - this.alpha) * this.s;
+    }
+    this.y = value;
+    return this.s;
+  }
+  lastValue() { return this.y; }
+  reset() { this.y = null; this.s = null; }
 }
 
-/* extract position, rotation, scale from face landmarks */
+class OneEuroFilter {
+  /**
+   * @param {number} freq     - expected signal frequency (Hz), e.g. 30 for 30fps
+   * @param {number} minCutoff - minimum cutoff frequency (lower = smoother when still)
+   * @param {number} beta      - speed coefficient (higher = more responsive to fast moves)
+   * @param {number} dCutoff   - cutoff for derivative (usually 1.0)
+   */
+  constructor(freq = 30, minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+    this.freq = freq;
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.x = new LowPassFilter(this._alpha(minCutoff));
+    this.dx = new LowPassFilter(this._alpha(dCutoff));
+    this.lastTime = null;
+  }
+
+  _alpha(cutoff) {
+    const te = 1.0 / this.freq;
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / te);
+  }
+
+  filter(value, timestamp) {
+    if (this.lastTime !== null && timestamp !== this.lastTime) {
+      this.freq = 1.0 / ((timestamp - this.lastTime) / 1000);
+    }
+    this.lastTime = timestamp;
+
+    const prev = this.x.lastValue();
+    const dx = prev === null ? 0 : (value - prev) * this.freq;
+
+    const edx = this.dx.filter(dx);
+    this.dx.setAlpha(this._alpha(this.dCutoff));
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
+    this.x.setAlpha(this._alpha(cutoff));
+
+    return this.x.filter(value);
+  }
+
+  reset() {
+    this.x.reset();
+    this.dx.reset();
+    this.lastTime = null;
+  }
+}
+
+/* A bank of One Euro Filters, one per named channel */
+class FilterBank {
+  constructor(config) {
+    this.filters = {};
+    this.config = config;
+  }
+
+  filter(key, value, timestamp) {
+    if (!this.filters[key]) {
+      const c = this.config[key] || this.config._default;
+      this.filters[key] = new OneEuroFilter(c.freq, c.minCutoff, c.beta, c.dCutoff);
+    }
+    return this.filters[key].filter(value, timestamp);
+  }
+
+  reset() {
+    Object.values(this.filters).forEach(f => f.reset());
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FACE POSE HELPERS — improved landmark selection and math
+   ═══════════════════════════════════════════════════════════ */
+const LM = {
+  /* eyes */
+  leftEyeOuter: 33,
+  rightEyeOuter: 263,
+  leftEyeInner: 133,
+  rightEyeInner: 362,
+  /* temples (widest face points) */
+  leftTemple: 234,
+  rightTemple: 454,
+  /* nose */
+  noseBridge: 6,        /* between eyes, where glasses sit */
+  noseBridgeTop: 168,   /* slightly above */
+  noseTip: 1,
+  /* vertical reference */
+  foreHead: 10,
+  chin: 152,
+  /* cheek (for yaw estimation) */
+  leftCheek: 234,
+  rightCheek: 454,
+  /* eyebrow outer (secondary roll reference) */
+  leftBrowOuter: 46,
+  rightBrowOuter: 276,
+};
+
+const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
+
+/* 3D euclidean distance between two landmarks */
+function dist3D(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z || 0) - (b.z || 0)) ** 2);
+}
+
+/* average of multiple landmarks */
+function avgLandmark(...lms) {
+  const n = lms.length;
+  return {
+    x: lms.reduce((s, l) => s + l.x, 0) / n,
+    y: lms.reduce((s, l) => s + l.y, 0) / n,
+    z: lms.reduce((s, l) => s + (l.z || 0), 0) / n,
+  };
+}
+
+/* extract position, rotation, scale from face landmarks — IMPROVED */
 function extractFacePose(landmarks, vWidth, vHeight) {
   const bridge = landmarks[LM.noseBridge];
-  const leftEye = landmarks[LM.leftEyeOuter];
-  const rightEye = landmarks[LM.rightEyeOuter];
+  const bridgeTop = landmarks[LM.noseBridgeTop];
+  const leftEyeO = landmarks[LM.leftEyeOuter];
+  const rightEyeO = landmarks[LM.rightEyeOuter];
+  const leftEyeI = landmarks[LM.leftEyeInner];
+  const rightEyeI = landmarks[LM.rightEyeInner];
   const leftTemple = landmarks[LM.leftTemple];
   const rightTemple = landmarks[LM.rightTemple];
   const forehead = landmarks[LM.foreHead];
   const chin = landmarks[LM.chin];
+  const noseTip = landmarks[LM.noseTip];
 
-  /* position — mirrored for selfie view */
-  const px = (0.5 - bridge.x) * vWidth;
-  const py = -(bridge.y - 0.5) * vHeight;
+  /* ── POSITION ── */
+  /* Use averaged bridge point for stability (bridge + bridgeTop + midpoint of inner eyes) */
+  const innerMid = avgLandmark(leftEyeI, rightEyeI);
+  const anchor = avgLandmark(bridge, bridgeTop, innerMid);
 
-  /* scale — based on temple-to-temple distance */
-  const faceW = dist2D(leftTemple, rightTemple) * vWidth;
-  const modelWidth = 1.92; /* approximate width of glasses models */
-  const scale = (faceW / modelWidth) * 1.05;
+  /* mirror for selfie: 0.5-x maps (0..1) to (0.5..-0.5) */
+  const px = (0.5 - anchor.x) * vWidth;
+  /* shift the glasses slightly UP from the raw bridge point so they sit on the nose naturally */
+  const py = -(anchor.y - 0.5) * vHeight + vHeight * 0.015;
 
-  /* roll — tilt of eye line (negated for mirror) */
-  const roll = -Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+  /* ── SCALE ── */
+  /* Use multiple distances and average for robustness */
+  const templeW = dist3D(leftTemple, rightTemple);
+  const eyeOuterW = dist3D(leftEyeO, rightEyeO);
+  /* weighted average — eye outer is more stable than temples */
+  const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
+  const modelWidth = 1.92;
+  const scale = (faceW / modelWidth) * 1.0;
 
-  /* yaw — face left/right rotation from nose asymmetry */
-  const noseToBridgeMidX = bridge.x - (leftTemple.x + rightTemple.x) / 2;
-  const faceWidthNorm = Math.abs(rightTemple.x - leftTemple.x);
-  const yaw = Math.asin(Math.max(-0.9, Math.min(0.9, (noseToBridgeMidX / (faceWidthNorm * 0.5)) * 1.2)));
+  /* ── ROLL ── (head tilt left/right) */
+  /* Use eye outer corners — most stable for roll. Negate for mirror. */
+  const roll = -Math.atan2(
+    rightEyeO.y - leftEyeO.y,
+    rightEyeO.x - leftEyeO.x
+  );
 
-  /* pitch — vertical face proportion */
+  /* ── YAW ── (head left/right rotation) */
+  /* Compare distance from nose bridge to each temple.
+     When face turns right, left temple gets closer to nose in normalized coords. */
+  const leftDist = Math.abs(bridge.x - leftTemple.x);
+  const rightDist = Math.abs(bridge.x - rightTemple.x);
+  const totalDist = leftDist + rightDist;
+  /* ratio 0.5 = centered, <0.5 = turned right, >0.5 = turned left */
+  const yawRatio = totalDist > 0.001 ? leftDist / totalDist : 0.5;
+  /* map to angle: asin gives good nonlinear mapping. Negate for mirror. */
+  const yawNorm = (yawRatio - 0.5) * 2.0; /* -1 to 1 */
+  const yaw = Math.asin(Math.max(-0.95, Math.min(0.95, yawNorm * 0.9)));
+
+  /* ── PITCH ── (head up/down tilt) */
+  /* Use the ratio of bridge-to-noseTip vs forehead-to-chin.
+     When looking down, nose tip moves down relative to bridge. */
   const faceH = Math.abs(chin.y - forehead.y);
-  const bridgeToForehead = Math.abs(bridge.y - forehead.y);
-  const ratio = bridgeToForehead / (faceH || 0.001);
-  const pitch = (ratio - 0.35) * 2.0;
+  const bridgeToNose = bridge.y - noseTip.y; /* negative = nose above bridge (looking up) */
+  const bridgeToForehead = bridge.y - forehead.y;
+  /* normalized pitch signal */
+  const pitchRatio = faceH > 0.001 ? bridgeToForehead / faceH : 0.35;
+  const pitch = (pitchRatio - 0.33) * 1.8;
 
-  /* depth nudge from z coordinate */
-  const depthOffset = bridge.z * 0.5;
+  /* ── DEPTH ── */
+  /* Use face width in normalized coords as proxy for depth (closer = wider) */
+  const depthFromZ = anchor.z * 0.3;
 
-  return { px, py, scale, roll, yaw, pitch, depthOffset };
+  return { px, py, scale, roll, yaw, pitch, depthOffset: depthFromZ };
 }
+
+/* ═══════════════════════════════════════════════════════════
+   FILTER CONFIGURATION
+   Tuned per channel for natural feel:
+   - Position: low minCutoff (smooth), high beta (responsive to fast moves)
+   - Rotation: medium minCutoff (slightly more responsive than position)
+   - Scale: very low minCutoff + low beta (should feel almost locked)
+   ═══════════════════════════════════════════════════════════ */
+const FILTER_CONFIG = {
+  px:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
+  py:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
+  scale: { freq: 30, minCutoff: 0.3,  beta: 0.01, dCutoff: 1.0 },
+  roll:  { freq: 30, minCutoff: 1.2,  beta: 0.4,  dCutoff: 1.0 },
+  yaw:   { freq: 30, minCutoff: 1.0,  beta: 0.3,  dCutoff: 1.0 },
+  pitch: { freq: 30, minCutoff: 0.8,  beta: 0.2,  dCutoff: 1.0 },
+  depth: { freq: 30, minCutoff: 0.2,  beta: 0.01, dCutoff: 1.0 },
+  _default: { freq: 30, minCutoff: 1.0, beta: 0.1, dCutoff: 1.0 },
+};
 
 /* ═══════════════════════════════════════════════════════════
    MAIN COMPONENT
@@ -169,10 +338,14 @@ export default function ARTryOn({ onBack }) {
   const videoCanvasRef = useRef(null);
   const threeContainerRef = useRef(null);
   const sceneRef = useRef({});
-  const smootherRef = useRef(new Smoother(0.35));
+  const filterBankRef = useRef(new FilterBank(FILTER_CONFIG));
   const faceLandmarkerRef = useRef(null);
   const streamRef = useRef(null);
   const rafRef = useRef(null);
+
+  /* For smooth visibility transitions */
+  const glassesOpacityRef = useRef(0);
+  const targetOpacityRef = useRef(0);
 
   const [status, setStatus] = useState("idle"); /* idle | loading | live | error | captured */
   const [frameIdx, setFrameIdx] = useState(0);
@@ -217,7 +390,7 @@ export default function ARTryOn({ onBack }) {
     const f = AR_FRAMES[fIdx];
     const c = f.colors[cIdx];
     const glasses = f.build(c, MATERIAL_PBR);
-    glasses.visible = false; /* hidden until face detected */
+    glasses.visible = false;
     scene.add(glasses);
     sceneRef.current.glasses = glasses;
   }, []);
@@ -226,7 +399,8 @@ export default function ARTryOn({ onBack }) {
   useEffect(() => {
     if (sceneRef.current.scene) {
       buildGlasses(frameIdx, colorIdx);
-      smootherRef.current.reset();
+      filterBankRef.current.reset();
+      glassesOpacityRef.current = 0;
     }
   }, [frameIdx, colorIdx, buildGlasses]);
 
@@ -316,19 +490,18 @@ export default function ARTryOn({ onBack }) {
 
     const scene = new THREE.Scene();
 
-    /* lighting — designed to look natural on transparent overlay */
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    /* lighting — balanced for transparent overlay */
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const key = new THREE.DirectionalLight(0xffffff, 1.2);
     key.position.set(1, 2, 3);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0x8888ff, 0.4);
+    const fill = new THREE.DirectionalLight(0x8888ff, 0.35);
     fill.position.set(-2, 1, 2);
     scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xffffff, 0.6);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.5);
     rim.position.set(0, 1, -3);
     scene.add(rim);
 
-    /* working-distance geometry — at z=-2, compute visible size */
     const zDist = 2;
     const vHeight = 2 * zDist * Math.tan((fov * Math.PI / 180) / 2);
     const vWidth = vHeight * aspect;
@@ -345,17 +518,22 @@ export default function ARTryOn({ onBack }) {
 
     const vCtx = vCanvas.getContext("2d");
     let lastTime = -1;
-    let noFaceCount = 0;
+    let noFaceFrames = 0;
 
-    const loop = () => {
+    /* quaternion for smooth rotation interpolation */
+    const currentQuat = new THREE.Quaternion();
+    const targetQuat = new THREE.Quaternion();
+    const euler = new THREE.Euler(0, 0, 0, "ZYX");
+
+    const loop = (now) => {
       rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2) return;
 
-      const now = performance.now();
+      /* avoid duplicate timestamps from rAF */
       if (now === lastTime) return;
       lastTime = now;
 
-      const { renderer, scene, camera, zDist, vWidth, vHeight, glasses } = sceneRef.current;
+      const { renderer, scene, camera, zDist, glasses } = sceneRef.current;
       if (!renderer || !glasses) return;
 
       /* resize canvas to match video */
@@ -367,7 +545,6 @@ export default function ARTryOn({ onBack }) {
         renderer.setSize(vCanvas.clientWidth, vCanvas.clientHeight);
         camera.aspect = vCanvas.clientWidth / vCanvas.clientHeight;
         camera.updateProjectionMatrix();
-        /* recalculate visible dimensions */
         const newVH = 2 * zDist * Math.tan((sceneRef.current.fov * Math.PI / 180) / 2);
         sceneRef.current.vHeight = newVH;
         sceneRef.current.vWidth = newVH * camera.aspect;
@@ -384,41 +561,90 @@ export default function ARTryOn({ onBack }) {
       const hasFace = result.faceLandmarks && result.faceLandmarks.length > 0;
 
       if (hasFace) {
-        noFaceCount = 0;
+        noFaceFrames = 0;
+        targetOpacityRef.current = 1;
         setFaceDetected(true);
 
         const landmarks = result.faceLandmarks[0];
         const pose = extractFacePose(landmarks, sceneRef.current.vWidth, sceneRef.current.vHeight);
-        const sm = smootherRef.current;
+        const fb = filterBankRef.current;
+        const t = now; /* timestamp for filters */
 
-        /* smooth all values */
-        const spx = sm.smooth("px", pose.px);
-        const spy = sm.smooth("py", pose.py);
-        const sscale = sm.smooth("scale", pose.scale);
-        const sroll = sm.smooth("roll", pose.roll);
-        const syaw = sm.smooth("yaw", pose.yaw);
-        const spitch = sm.smooth("pitch", pose.pitch);
-        const sdepth = sm.smooth("depth", pose.depthOffset);
+        /* apply One Euro Filters per channel */
+        const fpx    = fb.filter("px",    pose.px,          t);
+        const fpy    = fb.filter("py",    pose.py,          t);
+        const fscale = fb.filter("scale", pose.scale,       t);
+        const froll  = fb.filter("roll",  pose.roll,        t);
+        const fyaw   = fb.filter("yaw",   pose.yaw,         t);
+        const fpitch = fb.filter("pitch", pose.pitch,       t);
+        const fdepth = fb.filter("depth", pose.depthOffset, t);
 
-        glasses.visible = true;
-        glasses.position.set(spx, spy, -zDist + sdepth);
-        glasses.scale.setScalar(sscale);
-        glasses.rotation.order = "ZYX";
-        glasses.rotation.set(spitch, syaw, sroll);
-      } else {
-        noFaceCount++;
-        /* hide after 15 frames of no face (~0.5s) */
-        if (noFaceCount > 15) {
-          glasses.visible = false;
-          setFaceDetected(false);
-          smootherRef.current.reset();
+        /* position */
+        glasses.position.set(fpx, fpy, -zDist + fdepth);
+
+        /* scale */
+        glasses.scale.setScalar(fscale);
+
+        /* rotation via quaternion slerp for buttery interpolation */
+        euler.set(fpitch, fyaw, froll);
+        targetQuat.setFromEuler(euler);
+
+        /* slerp current towards target — this adds one more layer of smoothness
+           on top of the One Euro filter, specifically for rotation which is
+           most noticeable when jittery */
+        if (glasses.quaternion.dot(targetQuat) < 0) {
+          targetQuat.x *= -1;
+          targetQuat.y *= -1;
+          targetQuat.z *= -1;
+          targetQuat.w *= -1;
         }
+        glasses.quaternion.slerp(targetQuat, 0.55);
+
+      } else {
+        noFaceFrames++;
+        /* fade out after ~10 frames (~0.3s) of no face */
+        if (noFaceFrames > 10) {
+          targetOpacityRef.current = 0;
+          if (noFaceFrames > 25) {
+            setFaceDetected(false);
+            filterBankRef.current.reset();
+          }
+        }
+      }
+
+      /* smooth opacity transitions (fade in/out glasses) */
+      const opacitySpeed = targetOpacityRef.current > glassesOpacityRef.current ? 0.15 : 0.08;
+      glassesOpacityRef.current += (targetOpacityRef.current - glassesOpacityRef.current) * opacitySpeed;
+
+      if (glassesOpacityRef.current > 0.01) {
+        glasses.visible = true;
+        /* apply opacity to all materials */
+        glasses.traverse(child => {
+          if (child.isMesh && child.material) {
+            child.material.opacity = child.material.userData?._baseOpacity != null
+              ? child.material.userData._baseOpacity * glassesOpacityRef.current
+              : glassesOpacityRef.current;
+            child.material.transparent = true;
+          }
+        });
+      } else {
+        glasses.visible = false;
+      }
+
+      /* store base opacities on first visible frame */
+      if (hasFace && !glasses.userData._opacitiesStored) {
+        glasses.traverse(child => {
+          if (child.isMesh && child.material) {
+            child.material.userData._baseOpacity = child.material.opacity;
+          }
+        });
+        glasses.userData._opacitiesStored = true;
       }
 
       renderer.render(scene, camera);
     };
 
-    loop();
+    rafRef.current = requestAnimationFrame(loop);
   }, []);
 
   /* ── START EVERYTHING ── */
@@ -433,7 +659,6 @@ export default function ARTryOn({ onBack }) {
     const camOk = await startCamera();
     if (!camOk) return;
 
-    /* wait for video dimensions to be available */
     await new Promise((res) => {
       const check = () => {
         if (videoRef.current && videoRef.current.videoWidth > 0) return res();
@@ -442,11 +667,9 @@ export default function ARTryOn({ onBack }) {
       check();
     });
 
-    const vw = videoRef.current.videoWidth;
-    const vh = videoRef.current.videoHeight;
     const container = threeContainerRef.current;
-    const displayW = container?.clientWidth || vw;
-    const displayH = container?.clientHeight || vh;
+    const displayW = container?.clientWidth || videoRef.current.videoWidth;
+    const displayH = container?.clientHeight || videoRef.current.videoHeight;
 
     initThreeJS(displayW, displayH);
     buildGlasses(frameIdx, colorIdx);
@@ -467,15 +690,13 @@ export default function ARTryOn({ onBack }) {
     const { renderer } = sceneRef.current;
     if (!vCanvas || !renderer) return;
 
-    /* composite both canvases */
     const offscreen = document.createElement("canvas");
-    offscreen.width = vCanvas.clientWidth * 2; /* high-res capture */
+    offscreen.width = vCanvas.clientWidth * 2;
     offscreen.height = vCanvas.clientHeight * 2;
     const ctx = offscreen.getContext("2d");
     ctx.drawImage(vCanvas, 0, 0, offscreen.width, offscreen.height);
     ctx.drawImage(renderer.domElement, 0, 0, offscreen.width, offscreen.height);
 
-    /* watermark */
     ctx.font = `${offscreen.width * 0.018}px "DM Sans", sans-serif`;
     ctx.fillStyle = "rgba(255,255,255,0.5)";
     ctx.textAlign = "right";
@@ -548,23 +769,19 @@ export default function ARTryOn({ onBack }) {
         background: "#0a0a0c", border: "1px solid rgba(255,255,255,0.06)",
         boxShadow: "0 8px 60px rgba(0,0,0,0.4)",
       }}>
-        {/* hidden video element */}
         <video ref={videoRef} playsInline muted style={{ display: "none" }} />
 
-        {/* video canvas */}
         <canvas ref={videoCanvasRef} style={{
           position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover",
           display: (status === "live" || status === "captured") ? "block" : "none",
         }} />
 
-        {/* three.js overlay container */}
         <div ref={threeContainerRef} style={{
           position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
           pointerEvents: "none",
           display: status === "live" ? "block" : "none",
         }} />
 
-        {/* captured image overlay */}
         {status === "captured" && capturedImage && (
           <img src={capturedImage} alt="Captured" style={{
             position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
@@ -572,7 +789,6 @@ export default function ARTryOn({ onBack }) {
           }} />
         )}
 
-        {/* ── IDLE / LOADING ── */}
         {(status === "idle" || status === "loading") && (
           <div style={{
             position: "absolute", inset: 0, display: "flex", flexDirection: "column",
@@ -593,7 +809,6 @@ export default function ARTryOn({ onBack }) {
           </div>
         )}
 
-        {/* ── ERROR ── */}
         {status === "error" && (
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 32 }}>
             <p style={{ fontSize: 14, opacity: 0.6, textAlign: "center", color: "#ff6b6b" }}>{cameraError}</p>
@@ -605,14 +820,12 @@ export default function ARTryOn({ onBack }) {
           </div>
         )}
 
-        {/* ── FACE NOT DETECTED HINT ── */}
         {status === "live" && !faceDetected && (
           <div style={{
             position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
             display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
             animation: "arFadeIn 0.5s ease both", pointerEvents: "none",
           }}>
-            {/* face oval guide */}
             <svg width="160" height="220" viewBox="0 0 160 220" style={{ opacity: 0.3 }}>
               <ellipse cx="80" cy="110" rx="60" ry="90" fill="none" stroke="#fff" strokeWidth="2" strokeDasharray="8 6" />
               <circle cx="55" cy="90" r="6" fill="none" stroke="#fff" strokeWidth="1.2" />
@@ -625,7 +838,6 @@ export default function ARTryOn({ onBack }) {
           </div>
         )}
 
-        {/* ── LIVE STATUS BADGE ── */}
         {status === "live" && faceDetected && (
           <div style={{
             position: "absolute", top: 14, left: 14,
@@ -640,7 +852,6 @@ export default function ARTryOn({ onBack }) {
           </div>
         )}
 
-        {/* ── CAPTURED OVERLAY CONTROLS ── */}
         {status === "captured" && (
           <div style={{
             position: "absolute", bottom: 0, left: 0, right: 0,
@@ -668,7 +879,6 @@ export default function ARTryOn({ onBack }) {
       {(status === "live" || status === "captured") && (
         <div style={{ maxWidth: 640, margin: "0 auto", animation: "arSlideUp 0.4s ease both" }}>
 
-          {/* capture button */}
           {status === "live" && (
             <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
               <button className="ar-capture-btn" onClick={handleCapture} style={{
@@ -682,7 +892,6 @@ export default function ARTryOn({ onBack }) {
             </div>
           )}
 
-          {/* frame selector */}
           <div style={{ marginTop: 24 }}>
             <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.3, marginBottom: 10, fontWeight: 600, textAlign: "center" }}>
               Frame Style
@@ -702,7 +911,6 @@ export default function ARTryOn({ onBack }) {
             </div>
           </div>
 
-          {/* colour swatches */}
           <div style={{ marginTop: 16 }}>
             <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.3, marginBottom: 10, fontWeight: 600, textAlign: "center" }}>
               Colour — {color.name}
@@ -719,7 +927,6 @@ export default function ARTryOn({ onBack }) {
             </div>
           </div>
 
-          {/* back to configurator */}
           {onBack && (
             <div style={{ marginTop: 24, textAlign: "center" }}>
               <button className="ar-back-btn" onClick={() => { cleanup(); onBack(); }} style={{
@@ -733,14 +940,13 @@ export default function ARTryOn({ onBack }) {
             </div>
           )}
 
-          {/* tech note */}
           <div style={{ marginTop: 32, padding: "16px 20px", borderRadius: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
             <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.2, margin: "0 0 8px", fontWeight: 600 }}>How It Works</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
               {[
                 { n: "01", t: "Track", d: "468 facial landmarks detected at 30fps using MediaPipe Face Mesh" },
-                { n: "02", t: "Pose", d: "Head position, rotation & scale estimated from landmark geometry" },
-                { n: "03", t: "Render", d: "Three.js overlays the 3D glasses model in real-time on the camera feed" },
+                { n: "02", t: "Filter", d: "One Euro Filters adapt smoothing per channel — fast when you move, stable when still" },
+                { n: "03", t: "Render", d: "Quaternion slerp rotation and Three.js overlay create filter-quality tracking" },
               ].map((s, i) => (
                 <div key={i}>
                   <p style={{ fontSize: 9, opacity: 0.2, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 3px" }}>{s.n}</p>
