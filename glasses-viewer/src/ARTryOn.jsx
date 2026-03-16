@@ -106,218 +106,57 @@ const AR_FRAMES = [
 /* ═══════════════════════════════════════════════════════════
    FACE POSE HELPERS
    ═══════════════════════════════════════════════════════════ */
-const LM = {
-  noseBridge: 168,      /* top of nose bridge between eyes — more stable than 6 */
-  noseTip: 4,
-  leftEyeOuter: 33,
-  rightEyeOuter: 263,
-  leftEyeInner: 133,
-  rightEyeInner: 362,
-  leftTemple: 234,
-  rightTemple: 454,
-  foreHead: 10,
-  chin: 152,
-  leftCheek: 127,
-  rightCheek: 356,
-};
-
+const LM = { leftEyeOuter: 33, rightEyeOuter: 263, leftTemple: 234, rightTemple: 454, noseBridge: 6, foreHead: 10, chin: 152 };
 const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
 
 function dist2D(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
 
-/* ═══════════════════════════════════════════════════════════
-   ONE EURO FILTER — adaptive smoothing that kills jitter
-   when still but stays responsive during fast head movement.
-   Replaces the old simple EMA Smoother.
-   ═══════════════════════════════════════════════════════════ */
-class LowPassFilter {
-  constructor(alpha) {
-    this.y = null;
-    this.s = null;
-    this.setAlpha(alpha);
-  }
-  setAlpha(alpha) {
-    this.alpha = Math.max(0.001, Math.min(1, alpha));
-  }
-  filter(value) {
-    if (this.y === null) {
-      this.y = value;
-      this.s = value;
-      return value;
-    }
-    this.y = value;
-    this.s = this.alpha * value + (1 - this.alpha) * this.s;
-    return this.s;
-  }
-  hatValue() { return this.s; }
-  reset() { this.y = null; this.s = null; }
-}
-
-class OneEuroFilter {
-  constructor(freq = 30, minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
-    this.freq = freq;
-    this.minCutoff = minCutoff;
-    this.beta = beta;
-    this.dCutoff = dCutoff;
-    this.x = new LowPassFilter(this._alpha(minCutoff));
-    this.dx = new LowPassFilter(this._alpha(dCutoff));
-    this.lastTime = null;
-  }
-
-  _alpha(cutoff) {
-    const te = 1.0 / this.freq;
-    const tau = 1.0 / (2 * Math.PI * cutoff);
-    return 1.0 / (1.0 + tau / te);
-  }
-
-  filter(value, timestamp) {
-    if (this.lastTime !== null && timestamp !== undefined) {
-      const dt = timestamp - this.lastTime;
-      if (dt > 0) this.freq = 1.0 / (dt / 1000);
-    }
-    this.lastTime = timestamp;
-
-    const prev = this.x.hatValue();
-    const dx = prev === null ? 0 : (value - prev) * this.freq;
-    const edx = this.dx.filter(dx);
-    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
-    this.x.setAlpha(this._alpha(cutoff));
-    return this.x.filter(value);
-  }
-
-  reset() {
-    this.x.reset();
-    this.dx.reset();
-    this.lastTime = null;
-  }
-}
-
-/**
- * Drop-in replacement for the old Smoother.
- * Same .smooth(key, value) API but backed by per-channel One Euro Filters.
- */
+/* smooth a value toward a target with exponential moving average */
 class Smoother {
-  constructor() {
-    this.filters = {};
+  constructor(alpha = 0.35) { this.alpha = alpha; this.values = {}; }
+  smooth(key, raw) {
+    if (!(key in this.values) || isNaN(this.values[key])) { this.values[key] = raw; return raw; }
+    this.values[key] += (raw - this.values[key]) * this.alpha;
+    return this.values[key];
   }
-
-  smooth(key, value, timestamp) {
-    if (!this.filters[key]) {
-      const isRotation = ["roll", "yaw", "pitch"].includes(key);
-      const isScale = key === "scale";
-      this.filters[key] = new OneEuroFilter(
-        30,
-        isRotation ? 1.5 : isScale ? 0.8 : 1.0,
-        isRotation ? 0.004 : isScale ? 0.003 : 0.007,
-        1.0
-      );
-    }
-    return this.filters[key].filter(value, timestamp);
-  }
-
-  reset() {
-    Object.values(this.filters).forEach((f) => f.reset());
-    this.filters = {};
-  }
+  reset() { this.values = {}; }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   ASPECT RATIO CROP MAPPING
-   
-   Computes how CSS object-fit:cover crops the video so we
-   can correctly map MediaPipe landmarks (full video space)
-   to the display container. Fixes the 1080p camera bug.
-   ═══════════════════════════════════════════════════════════ */
-function computeCrop(videoW, videoH, containerW, containerH) {
-  const videoAspect = videoW / videoH;
-  const containerAspect = containerW / containerH;
-
-  let visibleFracX = 1;
-  let visibleFracY = 1;
-  let offsetX = 0;
-  let offsetY = 0;
-
-  if (videoAspect > containerAspect) {
-    /* video wider than container → horizontal crop */
-    visibleFracX = containerAspect / videoAspect;
-    offsetX = (1 - visibleFracX) / 2;
-  } else {
-    /* video taller than container → vertical crop */
-    visibleFracY = videoAspect / containerAspect;
-    offsetY = (1 - visibleFracY) / 2;
-  }
-
-  return { offsetX, offsetY, visibleFracX, visibleFracY };
-}
-
-/* ═══════════════════════════════════════════════════════════
-   POSE EXTRACTION — uses MediaPipe transformation matrix
-   when available, falls back to improved landmark math.
-   ═══════════════════════════════════════════════════════════ */
-function extractFacePose(landmarks, vWidth, vHeight, crop, matrix) {
+/* extract position, rotation, scale from face landmarks */
+function extractFacePose(landmarks, vWidth, vHeight) {
   const bridge = landmarks[LM.noseBridge];
-  const leftEyeOuter = landmarks[LM.leftEyeOuter];
-  const rightEyeOuter = landmarks[LM.rightEyeOuter];
+  const leftEye = landmarks[LM.leftEyeOuter];
+  const rightEye = landmarks[LM.rightEyeOuter];
   const leftTemple = landmarks[LM.leftTemple];
   const rightTemple = landmarks[LM.rightTemple];
   const forehead = landmarks[LM.foreHead];
   const chin = landmarks[LM.chin];
 
-  /* ── POSITION — map through crop for aspect ratio correction ── */
-  const mappedX = (bridge.x - crop.offsetX) / crop.visibleFracX;
-  const mappedY = (bridge.y - crop.offsetY) / crop.visibleFracY;
-  const px = (0.5 - mappedX) * vWidth;
-  const py = -(mappedY - 0.5) * vHeight;
+  /* position — mirrored for selfie view */
+  const px = (0.5 - bridge.x) * vWidth;
+  const py = -(bridge.y - 0.5) * vHeight;
 
-  /* ── SCALE — outer eye distance is more stable than temples ── */
-  const eyeDistNorm = dist2D(leftEyeOuter, rightEyeOuter);
-  const eyeDistWorld = (eyeDistNorm / crop.visibleFracX) * vWidth;
-  const modelEyeSpan = 1.08;
-  const scale = (eyeDistWorld / modelEyeSpan) * 0.95;
+  /* scale — based on temple-to-temple distance */
+  const faceW = dist2D(leftTemple, rightTemple) * vWidth;
+  const modelWidth = 1.92; /* approximate width of glasses models */
+  const scale = (faceW / modelWidth) * 1.05;
 
-  /* ── ROTATION ── */
-  let roll, yaw, pitch;
+  /* roll — tilt of eye line (negated for mirror) */
+  const roll = -Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
 
-  if (matrix) {
-    /* Use MediaPipe's 4×4 transformation matrix — far more stable */
-    const m = matrix.data;
-    pitch = Math.asin(-Math.max(-1, Math.min(1, m[6])));
+  /* yaw — face left/right rotation from nose asymmetry */
+  const noseToBridgeMidX = bridge.x - (leftTemple.x + rightTemple.x) / 2;
+  const faceWidthNorm = Math.abs(rightTemple.x - leftTemple.x);
+  const yaw = Math.asin(Math.max(-0.9, Math.min(0.9, (noseToBridgeMidX / (faceWidthNorm * 0.5)) * 1.2)));
 
-    if (Math.abs(m[6]) < 0.999) {
-      yaw = Math.atan2(m[2], m[10]);
-      roll = Math.atan2(m[4], m[5]);
-    } else {
-      yaw = Math.atan2(-m[8], m[0]);
-      roll = 0;
-    }
+  /* pitch — vertical face proportion */
+  const faceH = Math.abs(chin.y - forehead.y);
+  const bridgeToForehead = Math.abs(bridge.y - forehead.y);
+  const ratio = bridgeToForehead / (faceH || 0.001);
+  const pitch = (ratio - 0.35) * 2.0;
 
-    yaw = -yaw;
-    roll = -roll;
-  } else {
-    /* Fallback: improved landmark-based estimation */
-    roll = -Math.atan2(
-      rightEyeOuter.y - leftEyeOuter.y,
-      rightEyeOuter.x - leftEyeOuter.x
-    );
-
-    /* Yaw from z-depth difference — much more stable than 2D nose offset */
-    const leftZ = leftTemple.z || 0;
-    const rightZ = rightTemple.z || 0;
-    const zDiff = rightZ - leftZ;
-    const faceWidthNorm = dist2D(leftTemple, rightTemple);
-    yaw = Math.asin(
-      Math.max(-0.8, Math.min(0.8, zDiff / (faceWidthNorm * 0.8)))
-    );
-
-    /* Pitch from bridge-to-forehead ratio */
-    const faceH = dist2D(forehead, chin) || 0.001;
-    const bridgeToForehead = dist2D(bridge, forehead);
-    const ratio = bridgeToForehead / faceH;
-    pitch = (ratio - 0.32) * 1.8;
-  }
-
-  /* ── DEPTH ── */
-  const depthOffset = (bridge.z || 0) * 0.4;
+  /* depth nudge from z coordinate */
+  const depthOffset = bridge.z * 0.5;
 
   return { px, py, scale, roll, yaw, pitch, depthOffset };
 }
@@ -330,7 +169,7 @@ export default function ARTryOn({ onBack }) {
   const videoCanvasRef = useRef(null);
   const threeContainerRef = useRef(null);
   const sceneRef = useRef({});
-  const smootherRef = useRef(new Smoother()); /* ← no args, One Euro handles it */
+  const smootherRef = useRef(new Smoother(0.35));
   const faceLandmarkerRef = useRef(null);
   const streamRef = useRef(null);
   const rafRef = useRef(null);
@@ -405,7 +244,7 @@ export default function ARTryOn({ onBack }) {
         runningMode: "VIDEO",
         numFaces: 1,
         outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: true, /* ← FIX: was false — enables 4×4 pose matrix */
+        outputFacialTransformationMatrixes: false,
       });
       faceLandmarkerRef.current = fl;
       return true;
@@ -421,13 +260,7 @@ export default function ARTryOn({ onBack }) {
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          /* FIX: removed height: { ideal: 960 } — was forcing 4:3,
-             which fails or causes crop mismatch on 16:9 (1080p) cameras.
-             Let the camera use its native aspect ratio. */
-        },
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } },
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -522,7 +355,7 @@ export default function ARTryOn({ onBack }) {
       if (now === lastTime) return;
       lastTime = now;
 
-      const { renderer, scene, camera, zDist, glasses } = sceneRef.current;
+      const { renderer, scene, camera, zDist, vWidth, vHeight, glasses } = sceneRef.current;
       if (!renderer || !glasses) return;
 
       /* resize canvas to match video */
@@ -540,18 +373,10 @@ export default function ARTryOn({ onBack }) {
         sceneRef.current.vWidth = newVH * camera.aspect;
       }
 
-      /* ── FIX: crop-aware video drawing ──
-         Compute the crop so the canvas shows the same region
-         the container would show via CSS object-fit:cover. */
-      const crop = computeCrop(vw, vh, vCanvas.clientWidth, vCanvas.clientHeight);
-      const sx = crop.offsetX * vw;
-      const sy = crop.offsetY * vh;
-      const sw = crop.visibleFracX * vw;
-      const sh = crop.visibleFracY * vh;
-
+      /* draw mirrored video */
       vCtx.save();
-      vCtx.scale(-1, 1); /* mirror for selfie */
-      vCtx.drawImage(video, sx, sy, sw, sh, -vw, 0, vw, vh);
+      vCtx.scale(-1, 1);
+      vCtx.drawImage(video, -vw, 0, vw, vh);
       vCtx.restore();
 
       /* detect face */
@@ -563,33 +388,17 @@ export default function ARTryOn({ onBack }) {
         setFaceDetected(true);
 
         const landmarks = result.faceLandmarks[0];
-
-        /* ── FIX: get transformation matrix for stable rotation ── */
-        const matrix =
-          result.facialTransformationMatrixes &&
-          result.facialTransformationMatrixes.length > 0
-            ? result.facialTransformationMatrixes[0]
-            : null;
-
-        /* ── FIX: pass crop + matrix to pose extraction ── */
-        const pose = extractFacePose(
-          landmarks,
-          sceneRef.current.vWidth,
-          sceneRef.current.vHeight,
-          crop,
-          matrix
-        );
-
+        const pose = extractFacePose(landmarks, sceneRef.current.vWidth, sceneRef.current.vHeight);
         const sm = smootherRef.current;
 
-        /* smooth all values — pass timestamp for adaptive filtering */
-        const spx = sm.smooth("px", pose.px, now);
-        const spy = sm.smooth("py", pose.py, now);
-        const sscale = sm.smooth("scale", pose.scale, now);
-        const sroll = sm.smooth("roll", pose.roll, now);
-        const syaw = sm.smooth("yaw", pose.yaw, now);
-        const spitch = sm.smooth("pitch", pose.pitch, now);
-        const sdepth = sm.smooth("depth", pose.depthOffset, now);
+        /* smooth all values */
+        const spx = sm.smooth("px", pose.px);
+        const spy = sm.smooth("py", pose.py);
+        const sscale = sm.smooth("scale", pose.scale);
+        const sroll = sm.smooth("roll", pose.roll);
+        const syaw = sm.smooth("yaw", pose.yaw);
+        const spitch = sm.smooth("pitch", pose.pitch);
+        const sdepth = sm.smooth("depth", pose.depthOffset);
 
         glasses.visible = true;
         glasses.position.set(spx, spy, -zDist + sdepth);
@@ -670,7 +479,7 @@ export default function ARTryOn({ onBack }) {
     ctx.font = `${offscreen.width * 0.018}px "DM Sans", sans-serif`;
     ctx.fillStyle = "rgba(255,255,255,0.5)";
     ctx.textAlign = "right";
-    ctx.fillText("ReSight AR Try-On", offscreen.width - 20, offscreen.height - 16);
+    ctx.fillText("OPTIQ AR Try-On", offscreen.width - 20, offscreen.height - 16);
 
     const dataUrl = offscreen.toDataURL("image/png");
     setCapturedImage(dataUrl);
@@ -682,7 +491,7 @@ export default function ARTryOn({ onBack }) {
     if (!capturedImage) return;
     const a = document.createElement("a");
     a.href = capturedImage;
-    a.download = `resight-tryon-${AR_FRAMES[frameIdx].id}-${Date.now()}.png`;
+    a.download = `optiq-tryon-${AR_FRAMES[frameIdx].id}-${Date.now()}.png`;
     a.click();
   }, [capturedImage, frameIdx]);
 
@@ -930,7 +739,7 @@ export default function ARTryOn({ onBack }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
               {[
                 { n: "01", t: "Track", d: "468 facial landmarks detected at 30fps using MediaPipe Face Mesh" },
-                { n: "02", t: "Pose", d: "4×4 transformation matrix extracts head position, rotation & scale" },
+                { n: "02", t: "Pose", d: "Head position, rotation & scale estimated from landmark geometry" },
                 { n: "03", t: "Render", d: "Three.js overlays the 3D glasses model in real-time on the camera feed" },
               ].map((s, i) => (
                 <div key={i}>
