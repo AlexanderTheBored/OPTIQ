@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as THREE from "three";
 import ImpactPage from "./ImpactPage";
 import FitScanner from "./FitScanner";
+import ARTryOn from "./ARTryOn";
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
@@ -430,14 +431,13 @@ export default function GlassesViewer() {
           <div className="gv-nav-links">
             {[
               { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
+              { label: "AR Try-On", action: () => { setPage("ar"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "ar" },
               { label: "AI Fit Scanner", action: () => { setPage("scanner"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
               { label: "Our Impact", action: () => { setPage("impact"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "impact" },
-              { label: "How It Works", action: null, soon: true },
             ].map(item => (
               <button key={item.label} className="gv-nav-link" onClick={item.action || undefined}
                 style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 1.5, textTransform: "uppercase", cursor: item.action ? "pointer" : "default", padding: "4px 0", opacity: item.active ? 1 : 0.3, borderBottom: item.active ? "1px solid rgba(255,255,255,0.6)" : "1px solid transparent", display: "flex", alignItems: "center", gap: 6 }}>
                 {item.label}
-                {item.soon && <span style={{ fontSize: 7, padding: "1px 5px", borderRadius: 3, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)", letterSpacing: 1, opacity: 0.6 }}>SOON</span>}
               </button>
             ))}
           </div>
@@ -449,14 +449,12 @@ export default function GlassesViewer() {
           <div style={{ display: "flex", flexDirection: "column", padding: "8px 24px 16px", gap: 4, borderTop: "1px solid rgba(255,255,255,0.06)", animation: "gvFadeUp 0.3s ease both" }}>
             <button onClick={() => { setPage("configurator"); setStep(0); setMenuOpen(false); }}
               style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "configurator" ? 1 : 0.5 }}>Configurator</button>
+            <button onClick={() => { setPage("ar"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "ar" ? 1 : 0.5 }}>AR Try-On</button>
             <button onClick={() => { setPage("scanner"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
               style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "scanner" ? 1 : 0.5 }}>AI Fit Scanner</button>
             <button onClick={() => { setPage("impact"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
               style={{ background: "none", border: "none", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 14, padding: "10px 0", textAlign: "left", cursor: "pointer", letterSpacing: 1, textTransform: "uppercase", opacity: page === "impact" ? 1 : 0.5 }}>Our Impact</button>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0" }}>
-              <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, letterSpacing: 1, textTransform: "uppercase", opacity: 0.35 }}>How It Works</span>
-              <span style={{ fontSize: 8, padding: "1px 6px", borderRadius: 3, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)", letterSpacing: 1, opacity: 0.4 }}>SOON</span>
-            </div>
           </div>
         )}
       </nav>
@@ -775,6 +773,16 @@ export default function GlassesViewer() {
             setColorIdx(0);
             setSizeIdx(sIdx);
             setStep(5);
+            setPage("configurator");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }} />
+        </div>
+      )}
+
+      {/* AR TRY-ON */}
+      {page === "ar" && (
+        <div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}>
+          <ARTryOn onBack={() => {
             setPage("configurator");
             window.scrollTo({ top: 0, behavior: "smooth" });
           }} />
