@@ -426,7 +426,7 @@ export default function GlassesViewer() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 22, opacity: 0.9 }}>◈</span>
             <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 600, letterSpacing: 4 }}>OPTIQ</span>
-            <span style={{ fontSize: 9, opacity: 0.3, letterSpacing: 2, textTransform: "uppercase", marginLeft: 8, padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.1)" }}>Configurator</span>
+            <span style={{ fontSize: 9, opacity: 0.3, letterSpacing: 2, textTransform: "uppercase", marginLeft: 8, padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.1)" }}></span>
           </div>
           <div className="gv-nav-links">
             {[

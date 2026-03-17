@@ -243,8 +243,8 @@ function avgLandmark(...lms) {
   };
 }
 
-/* extract position, rotation, scale from face landmarks — IMPROVED */
-function extractFacePose(landmarks, vWidth, vHeight) {
+/* extract position & scale from landmarks, rotation from transformation matrix */
+function extractFacePose(landmarks, vWidth, vHeight, facialMatrix) {
   const bridge = landmarks[LM.noseBridge];
   const bridgeTop = landmarks[LM.noseBridgeTop];
   const leftEyeO = landmarks[LM.leftEyeOuter];
@@ -253,60 +253,74 @@ function extractFacePose(landmarks, vWidth, vHeight) {
   const rightEyeI = landmarks[LM.rightEyeInner];
   const leftTemple = landmarks[LM.leftTemple];
   const rightTemple = landmarks[LM.rightTemple];
-  const forehead = landmarks[LM.foreHead];
-  const chin = landmarks[LM.chin];
-  const noseTip = landmarks[LM.noseTip];
 
-  /* ── POSITION ── */
-  /* Use averaged bridge point for stability (bridge + bridgeTop + midpoint of inner eyes) */
+  /* ── POSITION (from landmarks — we want glasses on the nose bridge) ── */
   const innerMid = avgLandmark(leftEyeI, rightEyeI);
   const anchor = avgLandmark(bridge, bridgeTop, innerMid);
-
-  /* mirror for selfie: 0.5-x maps (0..1) to (0.5..-0.5) */
   const px = (0.5 - anchor.x) * vWidth;
-  /* shift the glasses slightly UP from the raw bridge point so they sit on the nose naturally */
   const py = -(anchor.y - 0.5) * vHeight + vHeight * 0.015;
 
-  /* ── SCALE ── */
-  /* Use multiple distances and average for robustness */
+  /* ── SCALE (from landmarks — face width is reliable) ── */
   const templeW = dist3D(leftTemple, rightTemple);
   const eyeOuterW = dist3D(leftEyeO, rightEyeO);
-  /* weighted average — eye outer is more stable than temples */
   const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
   const modelWidth = 1.92;
   const scale = (faceW / modelWidth) * 1.3;
 
-  /* ── ROLL ── (head tilt left/right) */
-  /* Use eye outer corners — most stable for roll. Negate for mirror. */
-  const roll = -Math.atan2(
-    rightEyeO.y - leftEyeO.y,
-    rightEyeO.x - leftEyeO.x
-  );
+  /* ── ROTATION (from facial transformation matrix — the real deal) ── */
+  let roll = 0, yaw = 0, pitch = 0;
 
-  /* ── YAW ── (head left/right rotation) */
-  /* Compare distance from nose bridge to each temple.
-     When face turns right, left temple gets closer to nose in normalized coords. */
-  const leftDist = Math.abs(bridge.x - leftTemple.x);
-  const rightDist = Math.abs(bridge.x - rightTemple.x);
-  const totalDist = leftDist + rightDist;
-  /* ratio 0.5 = centered, <0.5 = turned right, >0.5 = turned left */
-  const yawRatio = totalDist > 0.001 ? leftDist / totalDist : 0.5;
-  /* map to angle: asin gives good nonlinear mapping. Negate for mirror. */
-  const yawNorm = (yawRatio - 0.5) * 2.0; /* -1 to 1 */
-  const yaw = Math.asin(Math.max(-0.95, Math.min(0.95, yawNorm * 0.9)));
+  if (facialMatrix && facialMatrix.data) {
+    /* MediaPipe returns a 4x4 column-major matrix as a flat 16-element array.
+       We extract the 3x3 rotation sub-matrix and decompose to Euler angles.
+       Column-major layout:
+         col0: [0,1,2,3]  col1: [4,5,6,7]  col2: [8,9,10,11]  col3: [12,13,14,15]
+       So rotation matrix R:
+         R00=d[0]  R01=d[4]  R02=d[8]
+         R10=d[1]  R11=d[5]  R12=d[9]
+         R20=d[2]  R21=d[6]  R22=d[10]
+    */
+    const d = facialMatrix.data;
+    const R00 = d[0], R01 = d[4], R02 = d[8];
+    const R10 = d[1], R11 = d[5], R12 = d[9];
+    const R20 = d[2], R21 = d[6], R22 = d[10];
 
-  /* ── PITCH ── (head up/down tilt) */
-  /* Use the ratio of bridge-to-noseTip vs forehead-to-chin.
-     When looking down, nose tip moves down relative to bridge. */
-  const faceH = Math.abs(chin.y - forehead.y);
-  const bridgeToNose = bridge.y - noseTip.y; /* negative = nose above bridge (looking up) */
-  const bridgeToForehead = bridge.y - forehead.y;
-  /* normalized pitch signal */
-  const pitchRatio = faceH > 0.001 ? bridgeToForehead / faceH : 0.35;
-  const pitch = (pitchRatio - 0.33) * 1.8;
+    /* Decompose to ZYX Euler angles (matches Three.js "ZYX" order):
+       pitch = rotation around X
+       yaw   = rotation around Y
+       roll  = rotation around Z */
+    const sy = Math.sqrt(R00 * R00 + R10 * R10);
+    const singular = sy < 1e-6;
 
-  /* ── DEPTH ── */
-  /* Use face width in normalized coords as proxy for depth (closer = wider) */
+    if (!singular) {
+      pitch = Math.atan2(R21, R22);       /* X rotation */
+      yaw   = Math.atan2(-R20, sy);       /* Y rotation */
+      roll  = Math.atan2(R10, R00);       /* Z rotation */
+    } else {
+      pitch = Math.atan2(-R12, R11);
+      yaw   = Math.atan2(-R20, sy);
+      roll  = 0;
+    }
+
+    /* Mirror yaw and roll for selfie camera (horizontal flip) */
+    yaw = -yaw;
+    roll = -roll;
+
+    /* Clamp to avoid wild values at detection edges */
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    yaw   = Math.max(-1.2, Math.min(1.2, yaw));
+    roll  = Math.max(-0.8, Math.min(0.8, roll));
+  } else {
+    /* Fallback: basic landmark-based rotation if matrix unavailable */
+    roll = -Math.atan2(rightEyeO.y - leftEyeO.y, rightEyeO.x - leftEyeO.x);
+    const leftDist = Math.abs(bridge.x - leftTemple.x);
+    const rightDist = Math.abs(bridge.x - rightTemple.x);
+    const totalDist = leftDist + rightDist;
+    const yawNorm = totalDist > 0.001 ? ((leftDist / totalDist) - 0.5) * 2.0 : 0;
+    yaw = Math.asin(Math.max(-0.95, Math.min(0.95, yawNorm * 0.9)));
+    pitch = 0;
+  }
+
   const depthFromZ = anchor.z * 0.3;
 
   return { px, py, scale, roll, yaw, pitch, depthOffset: depthFromZ };
@@ -391,6 +405,12 @@ export default function ARTryOn({ onBack }) {
     const c = f.colors[cIdx];
     const glasses = f.build(c, MATERIAL_PBR);
     glasses.visible = false;
+    /* store original opacities NOW before any render-loop modification */
+    glasses.traverse(child => {
+      if (child.isMesh && child.material) {
+        child.material.userData._baseOpacity = child.material.opacity;
+      }
+    });
     scene.add(glasses);
     sceneRef.current.glasses = glasses;
   }, []);
@@ -418,7 +438,7 @@ export default function ARTryOn({ onBack }) {
         runningMode: "VIDEO",
         numFaces: 1,
         outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: false,
+        outputFacialTransformationMatrixes: true,
       });
       faceLandmarkerRef.current = fl;
       return true;
@@ -566,7 +586,8 @@ export default function ARTryOn({ onBack }) {
         setFaceDetected(true);
 
         const landmarks = result.faceLandmarks[0];
-        const pose = extractFacePose(landmarks, sceneRef.current.vWidth, sceneRef.current.vHeight);
+        const faceMatrix = result.facialTransformationMatrixes?.[0] || null;
+        const pose = extractFacePose(landmarks, sceneRef.current.vWidth, sceneRef.current.vHeight, faceMatrix);
         const fb = filterBankRef.current;
         const t = now; /* timestamp for filters */
 
@@ -613,7 +634,7 @@ export default function ARTryOn({ onBack }) {
       }
 
       /* smooth opacity transitions (fade in/out glasses) */
-      const opacitySpeed = targetOpacityRef.current > glassesOpacityRef.current ? 0.15 : 0.08;
+      const opacitySpeed = targetOpacityRef.current > glassesOpacityRef.current ? 0.3 : 0.1;
       glassesOpacityRef.current += (targetOpacityRef.current - glassesOpacityRef.current) * opacitySpeed;
 
       if (glassesOpacityRef.current > 0.01) {
@@ -629,16 +650,6 @@ export default function ARTryOn({ onBack }) {
         });
       } else {
         glasses.visible = false;
-      }
-
-      /* store base opacities on first visible frame */
-      if (hasFace && !glasses.userData._opacitiesStored) {
-        glasses.traverse(child => {
-          if (child.isMesh && child.material) {
-            child.material.userData._baseOpacity = child.material.opacity;
-          }
-        });
-        glasses.userData._opacitiesStored = true;
       }
 
       renderer.render(scene, camera);
