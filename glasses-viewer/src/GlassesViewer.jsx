@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import ImpactPage from "./ImpactPage";
 import FitScanner from "./FitScanner";
 import ARTryOn from "./ARTryOn";
+
 import FlowingMenu from "./FlowingMenu";
 import useFrameThumbnails from "./useFrameThumbnails";
 
@@ -176,8 +177,6 @@ function useParticles(ref,c){const cr=useRef(c);cr.current=c;useEffect(()=>{cons
    ═══════════════════════════════════════════════════════════ */
 const STEPS = ["Frame","Material","Lens","Colour","Size","Summary"];
 
-/* step names for reference */
-
 /* ═══════════════════════════════════════════════════════════
    OPTION CARD (reusable)
    ═══════════════════════════════════════════════════════════ */
@@ -230,6 +229,22 @@ export default function GlassesViewer() {
   const size = SIZES[sizeIdx];
 
   const totalPrice = useMemo(() => frame.basePrice + material.price + lens.price, [frame, material, lens]);
+
+  // Pre-render 3D models as marquee thumbnails
+  const frameThumbnails = useFrameThumbnails(FRAMES, MATERIALS[0].pbr);
+
+  // Build items for the FlowingMenu
+  const flowingMenuItems = useMemo(() =>
+    FRAMES.map((f, i) => ({
+      link: "#",
+      text: f.name,
+      subtitle: f.category,
+      price: f.basePrice,
+      image: frameThumbnails[i] || "",
+      isCustom: !!f.url,
+    })),
+    [frameThumbnails]
+  );
 
   useParticles(particleCanvasRef, color.particle);
 
@@ -635,21 +650,39 @@ export default function GlassesViewer() {
 
             {/* STEP 0: FRAME */}
             {step === 0 && (<>
-              <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>Choose your frame</h2>
-              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Each frame is 3D printed from recycled materials to your exact specs.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {FRAMES.map((f, i) => (
-                  <OptCard key={f.id} selected={frameIdx === i} onClick={() => { setFrameIdx(i); setColorIdx(0); }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div>
-                        <span style={{ fontSize: 15, fontWeight: 500 }}>{f.name}</span>
-                        <p style={{ margin: "3px 0 0", fontSize: 11, opacity: 0.4 }}>{f.description}</p>
-                      </div>
-                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", marginLeft: 12 }}>${f.basePrice}</span>
-                    </div>
-                  </OptCard>
-                ))}
+              <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 500, margin: "0 0 6px" }}>
+                Choose your frame
+              </h2>
+              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 16px" }}>
+                Each frame is 3D printed from recycled materials to your exact specs.
+              </p>
+              <div style={{
+                height: Math.max(320, FRAMES.length * 76),
+                maxHeight: 460,
+                position: "relative",
+                borderRadius: 16,
+                overflow: "hidden",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}>
+                <FlowingMenu
+                  items={flowingMenuItems}
+                  speed={18}
+                  textColor="rgba(255,255,255,0.85)"
+                  bgColor="rgba(255,255,255,0.02)"
+                  marqueeBgColor="rgba(255,255,255,0.95)"
+                  marqueeTextColor="#060010"
+                  borderColor="rgba(255,255,255,0.06)"
+                  selectedIndex={frameIdx}
+                  onItemClick={(i) => { setFrameIdx(i); setColorIdx(0); }}
+                />
               </div>
+              <p style={{
+                fontSize: 10, opacity: 0.2, marginTop: 10,
+                textAlign: "center", letterSpacing: 1.5,
+                textTransform: "uppercase",
+              }}>
+                Hover to preview · Click to select
+              </p>
             </>)}
 
             {/* STEP 1: MATERIAL */}
