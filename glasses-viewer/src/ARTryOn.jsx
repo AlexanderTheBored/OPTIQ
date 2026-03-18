@@ -4,9 +4,207 @@ import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 /* ═══════════════════════════════════════════════════════════
-   GEOMETRY HELPERS (duplicated from GlassesViewer for
-   self-containment — extract to shared module in production)
+   1. ONE EURO FILTER & MATH
    ═══════════════════════════════════════════════════════════ */
+class LowPassFilter {
+  constructor(alpha) {
+    this.y = null;
+    this.s = null;
+    this.setAlpha(alpha);
+  }
+  setAlpha(alpha) {
+    this.alpha = Math.max(0.0001, Math.min(1, alpha));
+  }
+  filter(value) {
+    if (this.y === null) {
+      this.s = value;
+    } else {
+      this.s = this.alpha * value + (1 - this.alpha) * this.s;
+    }
+    this.y = value;
+    return this.s;
+  }
+  lastValue() { return this.y; }
+  reset() { this.y = null; this.s = null; }
+}
+
+class OneEuroFilter {
+  constructor(freq = 30, minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+    this.freq = freq;
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.x = new LowPassFilter(this._alpha(minCutoff));
+    this.dx = new LowPassFilter(this._alpha(dCutoff));
+    this.lastTime = null;
+  }
+
+  _alpha(cutoff) {
+    const te = 1.0 / this.freq;
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / te);
+  }
+
+  filter(value, timestamp) {
+    if (this.lastTime !== null && timestamp !== this.lastTime) {
+      this.freq = 1.0 / ((timestamp - this.lastTime) / 1000);
+    }
+    this.lastTime = timestamp;
+
+    const prev = this.x.lastValue();
+    const dx = prev === null ? 0 : (value - prev) * this.freq;
+
+    const edx = this.dx.filter(dx);
+    this.dx.setAlpha(this._alpha(this.dCutoff));
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
+    this.x.setAlpha(this._alpha(cutoff));
+
+    return this.x.filter(value);
+  }
+
+  reset() {
+    this.x.reset();
+    this.dx.reset();
+    this.lastTime = null;
+  }
+}
+
+class FilterBank {
+  constructor(config) {
+    this.filters = {};
+    this.config = config;
+  }
+
+  filter(key, value, timestamp) {
+    if (!this.filters[key]) {
+      const c = this.config[key] || this.config._default;
+      this.filters[key] = new OneEuroFilter(c.freq, c.minCutoff, c.beta, c.dCutoff);
+    }
+    return this.filters[key].filter(value, timestamp);
+  }
+
+  reset() {
+    Object.values(this.filters).forEach(f => f.reset());
+  }
+}
+
+const FILTER_CONFIG = {
+  px:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
+  py:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
+  scale: { freq: 30, minCutoff: 0.3,  beta: 0.01, dCutoff: 1.0 },
+  roll:  { freq: 30, minCutoff: 1.2,  beta: 0.4,  dCutoff: 1.0 },
+  yaw:   { freq: 30, minCutoff: 1.0,  beta: 0.3,  dCutoff: 1.0 },
+  pitch: { freq: 30, minCutoff: 0.8,  beta: 0.2,  dCutoff: 1.0 },
+  depth: { freq: 30, minCutoff: 0.2,  beta: 0.01, dCutoff: 1.0 },
+  _default: { freq: 30, minCutoff: 1.0, beta: 0.1, dCutoff: 1.0 },
+};
+
+/* ═══════════════════════════════════════════════════════════
+   2. POSE ESTIMATION
+   ═══════════════════════════════════════════════════════════ */
+const LM = {
+  leftEyeOuter: 33, rightEyeOuter: 263,
+  leftEyeInner: 133, rightEyeInner: 362,
+  leftTemple: 234, rightTemple: 454,
+  noseBridge: 6, noseBridgeTop: 168, noseTip: 1,
+  foreHead: 10, chin: 152,
+  leftCheek: 234, rightCheek: 454,
+  leftBrowOuter: 46, rightBrowOuter: 276,
+};
+
+function dist3D(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z || 0) - (b.z || 0)) ** 2);
+}
+
+function avgLandmark(...lms) {
+  const n = lms.length;
+  return {
+    x: lms.reduce((s, l) => s + l.x, 0) / n,
+    y: lms.reduce((s, l) => s + l.y, 0) / n,
+    z: lms.reduce((s, l) => s + (l.z || 0), 0) / n,
+  };
+}
+
+function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFaceWidth = null) {
+  const bridge = landmarks[LM.noseBridge];
+  const bridgeTop = landmarks[LM.noseBridgeTop];
+  const leftEyeO = landmarks[LM.leftEyeOuter];
+  const rightEyeO = landmarks[LM.rightEyeOuter];
+  const leftEyeI = landmarks[LM.leftEyeInner];
+  const rightEyeI = landmarks[LM.rightEyeInner];
+  const leftTemple = landmarks[LM.leftTemple];
+  const rightTemple = landmarks[LM.rightTemple];
+
+  const templeW = dist3D(leftTemple, rightTemple);
+  const eyeOuterW = dist3D(leftEyeO, rightEyeO);
+  const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
+  const modelWidth = 1.92;
+
+  let scale;
+  if (calibratedFaceWidth) {
+    scale = (calibratedFaceWidth * (eyeOuterW / 0.085)) / modelWidth * 1.2;
+  } else {
+    scale = (faceW / modelWidth) * 1.6;
+  }
+
+  let roll = 0, yaw = 0, pitch = 0;
+
+  if (facialMatrix && facialMatrix.data) {
+    const d = facialMatrix.data;
+    const R00 = d[0], R01 = d[4], R02 = d[8];
+    const R10 = d[1], R11 = d[5], R12 = d[9];
+    const R20 = d[2], R21 = d[6], R22 = d[10];
+
+    const sy = Math.sqrt(R00 * R00 + R10 * R10);
+    const singular = sy < 1e-6;
+
+    if (!singular) {
+      pitch = Math.atan2(R21, R22);
+      yaw   = Math.atan2(-R20, sy);
+      roll  = Math.atan2(R10, R00);
+    } else {
+      pitch = Math.atan2(-R12, R11);
+      yaw   = Math.atan2(-R20, sy);
+      roll  = 0;
+    }
+
+    yaw = -yaw;
+    roll = -roll;
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    yaw   = Math.max(-1.2, Math.min(1.2, yaw));
+    roll  = Math.max(-0.8, Math.min(0.8, roll));
+  } else {
+    roll = -Math.atan2(rightEyeO.y - leftEyeO.y, rightEyeO.x - leftEyeO.x);
+    const leftDist = Math.abs(bridge.x - leftTemple.x);
+    const rightDist = Math.abs(bridge.x - rightTemple.x);
+    const totalDist = leftDist + rightDist;
+    const yawNorm = totalDist > 0.001 ? ((leftDist / totalDist) - 0.5) * 2.0 : 0;
+    yaw = Math.asin(Math.max(-0.95, Math.min(0.95, yawNorm * 0.9)));
+    pitch = 0;
+  }
+
+  const innerMid = avgLandmark(leftEyeI, rightEyeI);
+  const anchor = avgLandmark(bridge, bridgeTop, innerMid);
+
+  const pxBase = (0.5 - bridge.x) * vWidth;
+  const noseProtrusionScale = faceW * 0.12; 
+  const yawCorr = Math.sin(yaw) * noseProtrusionScale;
+  const px = pxBase + (yawCorr * vWidth);
+  const py = -(anchor.y - 0.5) * vHeight - vHeight * 0.02;
+
+  const depthScale = (0.085 / eyeOuterW) * 0.15;
+  const depthFromZ = (anchor.z * 0.2) + (depthScale * -1);
+
+  return { px, py, scale, roll, yaw, pitch, depthOffset: depthFromZ };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   3. AR GEOMETRY & FRAMES
+   ═══════════════════════════════════════════════════════════ */
+const MATERIAL_PBR = { metalness: 0.05, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 };
+const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
+
 function makeMaterials(color, matPbr) {
   const p = matPbr || { metalness: 0.6, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.1 };
   return {
@@ -15,17 +213,21 @@ function makeMaterials(color, matPbr) {
     hinge: new THREE.MeshPhysicalMaterial({ color: color.accent, metalness: 0.9, roughness: 0.12, clearcoat: 0.5, side: THREE.DoubleSide }),
   };
 }
+
 function tag(m, n) { m.userData.partName = n; return m; }
+
 function addTemples(g, mat, xs, yS = 0) {
   xs.forEach(({ x, sign }) => {
     const c = new THREE.CatmullRomCurve3([new THREE.Vector3(x, yS, 0), new THREE.Vector3(x + sign * 0.04, yS, -0.3), new THREE.Vector3(x + sign * 0.04, yS - 0.04, -0.9), new THREE.Vector3(x + sign * 0.02, yS - 0.14, -1.05)]);
     const m = new THREE.Mesh(new THREE.TubeGeometry(c, 32, 0.02, 8, false), mat); m.castShadow = true; tag(m, x < 0 ? "left-temple" : "right-temple"); g.add(m);
   });
 }
+
 function addHinges(g, mat, ps) {
   const geo = new THREE.CylinderGeometry(0.028, 0.028, 0.055, 12);
   ps.forEach(([x, y], i) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, -0.01); m.rotation.z = Math.PI / 2; m.castShadow = true; tag(m, i === 0 ? "left-hinge" : "right-hinge"); g.add(m); });
 }
+
 function addNosePads(g, mat, ps) {
   const geo = new THREE.SphereGeometry(0.025, 12, 12);
   ps.forEach(([x, y, z], i) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(1, 1.3, 0.6); tag(m, i === 0 ? "left-pad" : "right-pad"); g.add(m); });
@@ -39,6 +241,7 @@ function buildAviator(color, matPbr) {
   [0.08, -0.02].forEach((y, i) => { const c = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.12, y, 0), new THREE.Vector3(0, y + 0.04, 0.02), new THREE.Vector3(0.12, y, 0)]); g.add(tag(new THREE.Mesh(new THREE.TubeGeometry(c, 16, 0.018, 8, false), m.frame), i === 0 ? "bridge-upper" : "bridge-lower")); });
   addTemples(g, m.frame, [{ x: -0.96, sign: -1 }, { x: 0.96, sign: 1 }]); addHinges(g, m.hinge, [[-0.96, 0], [0.96, 0]]); addNosePads(g, m.hinge, [[-0.16, -0.28, 0.08], [0.16, -0.28, 0.08]]); return g;
 }
+
 function buildWayfarer(color, matPbr) {
   const g = new THREE.Group(), m = makeMaterials(color, matPbr); m.frame.metalness = Math.min(m.frame.metalness, 0.1);
   const s = new THREE.Shape(); s.moveTo(-0.38, 0.24); s.lineTo(0.4, 0.28); s.quadraticCurveTo(0.44, 0, 0.38, -0.24); s.lineTo(-0.36, -0.22); s.quadraticCurveTo(-0.42, 0, -0.38, 0.24);
@@ -49,12 +252,14 @@ function buildWayfarer(color, matPbr) {
   const bc = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.14, 0.04, 0), new THREE.Vector3(0, 0.10, 0.02), new THREE.Vector3(0.14, 0.04, 0)]); g.add(tag(new THREE.Mesh(new THREE.TubeGeometry(bc, 16, 0.028, 8, false), m.frame), "bridge"));
   addTemples(g, m.frame, [{ x: -0.94, sign: -1 }, { x: 0.94, sign: 1 }]); addHinges(g, m.hinge, [[-0.94, 0.05], [0.94, 0.05]]); addNosePads(g, m.hinge, [[-0.16, -0.18, 0.08], [0.16, -0.18, 0.08]]); return g;
 }
+
 function buildRound(color, matPbr) {
   const g = new THREE.Group(), m = makeMaterials(color, matPbr); const rG = new THREE.TorusGeometry(0.38, 0.022, 16, 64), dG = new THREE.CircleGeometry(0.38, 64);
   [-0.48, 0.48].forEach((x, i) => { const r = tag(new THREE.Mesh(rG, m.frame), i === 0 ? "left-rim" : "right-rim"); r.position.x = x; r.castShadow = true; g.add(r); const d = tag(new THREE.Mesh(dG, m.lens), i === 0 ? "left-lens" : "right-lens"); d.position.set(x, 0, 0.005); g.add(d); });
   const bc = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.10, 0.06, 0), new THREE.Vector3(-0.04, 0.14, 0.03), new THREE.Vector3(0.04, 0.14, 0.03), new THREE.Vector3(0.10, 0.06, 0)]); g.add(tag(new THREE.Mesh(new THREE.TubeGeometry(bc, 20, 0.018, 8, false), m.frame), "bridge"));
   addTemples(g, m.frame, [{ x: -0.86, sign: -1 }, { x: 0.86, sign: 1 }]); addHinges(g, m.hinge, [[-0.86, 0], [0.86, 0]]); addNosePads(g, m.hinge, [[-0.14, -0.22, 0.08], [0.14, -0.22, 0.08]]); return g;
 }
+
 function buildCatEye(color, matPbr) {
   const g = new THREE.Group(), m = makeMaterials(color, matPbr);
   const s = new THREE.Shape(); s.moveTo(-0.36, 0.18); s.quadraticCurveTo(-0.10, 0.30, 0.20, 0.34); s.quadraticCurveTo(0.46, 0.30, 0.44, 0.08); s.quadraticCurveTo(0.42, -0.22, 0.10, -0.26); s.quadraticCurveTo(-0.24, -0.26, -0.38, -0.10); s.quadraticCurveTo(-0.42, 0.04, -0.36, 0.18);
@@ -63,11 +268,6 @@ function buildCatEye(color, matPbr) {
   const bc = new THREE.CatmullRomCurve3([new THREE.Vector3(-0.14, 0.10, 0), new THREE.Vector3(0, 0.16, 0.02), new THREE.Vector3(0.14, 0.10, 0)]); g.add(tag(new THREE.Mesh(new THREE.TubeGeometry(bc, 16, 0.025, 8, false), m.frame), "bridge"));
   addTemples(g, m.frame, [{ x: -0.92, sign: -1 }, { x: 0.92, sign: 1 }], 0.12); addHinges(g, m.hinge, [[-0.92, 0.12], [0.92, 0.12]]); addNosePads(g, m.hinge, [[-0.16, -0.16, 0.08], [0.16, -0.16, 0.08]]); return g;
 }
-
-/* ═══════════════════════════════════════════════════════════
-   FRAME DATA (minimal subset for AR)
-   ═══════════════════════════════════════════════════════════ */
-const MATERIAL_PBR = { metalness: 0.05, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 };
 
 const AR_FRAMES = [
   {
@@ -111,252 +311,7 @@ const AR_FRAMES = [
 ];
 
 /* ═══════════════════════════════════════════════════════════
-   ONE EURO FILTER — the industry standard for AR tracking.
-   Adapts smoothing based on speed: responsive during fast
-   head turns, rock-solid stable when you hold still.
-   Paper: https://cristal.univ-lille.fr/~casiez/1euro/
-   ═══════════════════════════════════════════════════════════ */
-class LowPassFilter {
-  constructor(alpha) {
-    this.y = null;
-    this.s = null;
-    this.setAlpha(alpha);
-  }
-  setAlpha(alpha) {
-    this.alpha = Math.max(0.0001, Math.min(1, alpha));
-  }
-  filter(value) {
-    if (this.y === null) {
-      this.s = value;
-    } else {
-      this.s = this.alpha * value + (1 - this.alpha) * this.s;
-    }
-    this.y = value;
-    return this.s;
-  }
-  lastValue() { return this.y; }
-  reset() { this.y = null; this.s = null; }
-}
-
-class OneEuroFilter {
-  /**
-   * @param {number} freq     - expected signal frequency (Hz), e.g. 30 for 30fps
-   * @param {number} minCutoff - minimum cutoff frequency (lower = smoother when still)
-   * @param {number} beta      - speed coefficient (higher = more responsive to fast moves)
-   * @param {number} dCutoff   - cutoff for derivative (usually 1.0)
-   */
-  constructor(freq = 30, minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
-    this.freq = freq;
-    this.minCutoff = minCutoff;
-    this.beta = beta;
-    this.dCutoff = dCutoff;
-    this.x = new LowPassFilter(this._alpha(minCutoff));
-    this.dx = new LowPassFilter(this._alpha(dCutoff));
-    this.lastTime = null;
-  }
-
-  _alpha(cutoff) {
-    const te = 1.0 / this.freq;
-    const tau = 1.0 / (2 * Math.PI * cutoff);
-    return 1.0 / (1.0 + tau / te);
-  }
-
-  filter(value, timestamp) {
-    if (this.lastTime !== null && timestamp !== this.lastTime) {
-      this.freq = 1.0 / ((timestamp - this.lastTime) / 1000);
-    }
-    this.lastTime = timestamp;
-
-    const prev = this.x.lastValue();
-    const dx = prev === null ? 0 : (value - prev) * this.freq;
-
-    const edx = this.dx.filter(dx);
-    this.dx.setAlpha(this._alpha(this.dCutoff));
-
-    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
-    this.x.setAlpha(this._alpha(cutoff));
-
-    return this.x.filter(value);
-  }
-
-  reset() {
-    this.x.reset();
-    this.dx.reset();
-    this.lastTime = null;
-  }
-}
-
-/* A bank of One Euro Filters, one per named channel */
-class FilterBank {
-  constructor(config) {
-    this.filters = {};
-    this.config = config;
-  }
-
-  filter(key, value, timestamp) {
-    if (!this.filters[key]) {
-      const c = this.config[key] || this.config._default;
-      this.filters[key] = new OneEuroFilter(c.freq, c.minCutoff, c.beta, c.dCutoff);
-    }
-    return this.filters[key].filter(value, timestamp);
-  }
-
-  reset() {
-    Object.values(this.filters).forEach(f => f.reset());
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   FACE POSE HELPERS — improved landmark selection and math
-   ═══════════════════════════════════════════════════════════ */
-const LM = {
-  /* eyes */
-  leftEyeOuter: 33,
-  rightEyeOuter: 263,
-  leftEyeInner: 133,
-  rightEyeInner: 362,
-  /* temples (widest face points) */
-  leftTemple: 234,
-  rightTemple: 454,
-  /* nose */
-  noseBridge: 6,        /* between eyes, where glasses sit */
-  noseBridgeTop: 168,   /* slightly above */
-  noseTip: 1,
-  /* vertical reference */
-  foreHead: 10,
-  chin: 152,
-  /* cheek (for yaw estimation) */
-  leftCheek: 234,
-  rightCheek: 454,
-  /* eyebrow outer (secondary roll reference) */
-  leftBrowOuter: 46,
-  rightBrowOuter: 276,
-};
-
-const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
-
-/* 3D euclidean distance between two landmarks */
-function dist3D(a, b) {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z || 0) - (b.z || 0)) ** 2);
-}
-
-/* average of multiple landmarks */
-function avgLandmark(...lms) {
-  const n = lms.length;
-  return {
-    x: lms.reduce((s, l) => s + l.x, 0) / n,
-    y: lms.reduce((s, l) => s + l.y, 0) / n,
-    z: lms.reduce((s, l) => s + (l.z || 0), 0) / n,
-  };
-}
-
-/* extract position & scale from landmarks, rotation from transformation matrix */
-function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFaceWidth = null) {
-  const bridge = landmarks[LM.noseBridge];
-  const bridgeTop = landmarks[LM.noseBridgeTop];
-  const leftEyeO = landmarks[LM.leftEyeOuter];
-  const rightEyeO = landmarks[LM.rightEyeOuter];
-  const leftEyeI = landmarks[LM.leftEyeInner];
-  const rightEyeI = landmarks[LM.rightEyeInner];
-  const leftTemple = landmarks[LM.leftTemple];
-  const rightTemple = landmarks[LM.rightTemple];
-
-  /* ── SCALE (from landmarks — face width is reliable) ── */
-  const templeW = dist3D(leftTemple, rightTemple);
-  const eyeOuterW = dist3D(leftEyeO, rightEyeO);
-  const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
-  const modelWidth = 1.92;
-
-  let scale;
-  if (calibratedFaceWidth) {
-    // Calibrated path: 1.2x boost for a better aesthetic fit
-    scale = (calibratedFaceWidth * (eyeOuterW / 0.085)) / modelWidth * 1.2;
-  } else {
-    // Heuristic path: boosted from 1.45 to 1.6
-    scale = (faceW / modelWidth) * 1.6;
-  }
-
-  /* ── ROTATION (from facial transformation matrix — the real deal) ── */
-  let roll = 0, yaw = 0, pitch = 0;
-
-  if (facialMatrix && facialMatrix.data) {
-    const d = facialMatrix.data;
-    const R00 = d[0], R01 = d[4], R02 = d[8];
-    const R10 = d[1], R11 = d[5], R12 = d[9];
-    const R20 = d[2], R21 = d[6], R22 = d[10];
-
-    const sy = Math.sqrt(R00 * R00 + R10 * R10);
-    const singular = sy < 1e-6;
-
-    if (!singular) {
-      pitch = Math.atan2(R21, R22);
-      yaw   = Math.atan2(-R20, sy);
-      roll  = Math.atan2(R10, R00);
-    } else {
-      pitch = Math.atan2(-R12, R11);
-      yaw   = Math.atan2(-R20, sy);
-      roll  = 0;
-    }
-
-    yaw = -yaw;
-    roll = -roll;
-
-    pitch = Math.max(-1.2, Math.min(1.2, pitch));
-    yaw   = Math.max(-1.2, Math.min(1.2, yaw));
-    roll  = Math.max(-0.8, Math.min(0.8, roll));
-  } else {
-    roll = -Math.atan2(rightEyeO.y - leftEyeO.y, rightEyeO.x - leftEyeO.x);
-    const leftDist = Math.abs(bridge.x - leftTemple.x);
-    const rightDist = Math.abs(bridge.x - rightTemple.x);
-    const totalDist = leftDist + rightDist;
-    const yawNorm = totalDist > 0.001 ? ((leftDist / totalDist) - 0.5) * 2.0 : 0;
-    yaw = Math.asin(Math.max(-0.95, Math.min(0.95, yawNorm * 0.9)));
-    pitch = 0;
-  }
-
-  /* ── POSITION (Perspective-aware refinement) ── */
-  const innerMid = avgLandmark(leftEyeI, rightEyeI);
-  const anchor = avgLandmark(bridge, bridgeTop, innerMid);
-
-  // Horizontal: Core bridge position (Landmark 6) + Damped Perspective correction
-  // Reverting to the pure nose center for absolute front-view centering.
-  const pxBase = (0.5 - bridge.x) * vWidth;
-
-  // Yaw Correction: Linearized for instant responsiveness during head turns.
-  const noseProtrusionScale = faceW * 0.12; 
-  const yawCorr = Math.sin(yaw) * noseProtrusionScale;
-  const px = pxBase + (yawCorr * vWidth);
-
-  // Vertical: Adjusted to -0.02 (raised from -0.03) for better eye clearance
-  const py = -(anchor.y - 0.5) * vHeight - vHeight * 0.02;
-
-  /* ── DEPTH STABILIZATION ── */
-  const depthScale = (0.085 / eyeOuterW) * 0.15;
-  const depthFromZ = (anchor.z * 0.2) + (depthScale * -1);
-
-  return { px, py, scale, roll, yaw, pitch, depthOffset: depthFromZ };
-}
-
-/* ═══════════════════════════════════════════════════════════
-   FILTER CONFIGURATION
-   Tuned per channel for natural feel:
-   - Position: low minCutoff (smooth), high beta (responsive to fast moves)
-   - Rotation: medium minCutoff (slightly more responsive than position)
-   - Scale: very low minCutoff + low beta (should feel almost locked)
-   ═══════════════════════════════════════════════════════════ */
-const FILTER_CONFIG = {
-  px:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
-  py:    { freq: 30, minCutoff: 1.5,  beta: 0.5,  dCutoff: 1.0 },
-  scale: { freq: 30, minCutoff: 0.3,  beta: 0.01, dCutoff: 1.0 },
-  roll:  { freq: 30, minCutoff: 1.2,  beta: 0.4,  dCutoff: 1.0 },
-  yaw:   { freq: 30, minCutoff: 1.0,  beta: 0.3,  dCutoff: 1.0 },
-  pitch: { freq: 30, minCutoff: 0.8,  beta: 0.2,  dCutoff: 1.0 },
-  depth: { freq: 30, minCutoff: 0.2,  beta: 0.01, dCutoff: 1.0 },
-  _default: { freq: 30, minCutoff: 1.0, beta: 0.1, dCutoff: 1.0 },
-};
-
-/* ═══════════════════════════════════════════════════════════
-   MAIN COMPONENT
+   4. MAIN REACT COMPONENT
    ═══════════════════════════════════════════════════════════ */
 export default function ARTryOn({ onBack, faceWidth }) {
   const videoRef = useRef(null);
@@ -368,11 +323,11 @@ export default function ARTryOn({ onBack, faceWidth }) {
   const streamRef = useRef(null);
   const rafRef = useRef(null);
 
-  /* For smooth visibility transitions */
   const glassesOpacityRef = useRef(0);
   const targetOpacityRef = useRef(0);
+  const prevFrameIdxRef = useRef(-1);
 
-  const [status, setStatus] = useState("idle"); /* idle | loading | live | error | captured */
+  const [status, setStatus] = useState("idle");
   const [frameIdx, setFrameIdx] = useState(0);
   const [colorIdx, setColorIdx] = useState(0);
   const [faceDetected, setFaceDetected] = useState(false);
@@ -381,6 +336,9 @@ export default function ARTryOn({ onBack, faceWidth }) {
 
   const frame = AR_FRAMES[frameIdx];
   const color = frame.colors[colorIdx];
+
+  const gltfLoader = useMemo(() => new GLTFLoader(), []);
+  const reqIdRef = useRef(0);
 
   /* ── inject CSS ── */
   useEffect(() => {
@@ -404,10 +362,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
     document.head.appendChild(s);
   }, []);
 
-  /* ── loader instance ── */
-  const gltfLoader = useMemo(() => new GLTFLoader(), []);
-  const reqIdRef = useRef(0);
-
   /* ── build / rebuild glasses model ── */
   const buildGlasses = useCallback(async (fIdx, cIdx) => {
     const { scene, glasses: old } = sceneRef.current;
@@ -425,10 +379,9 @@ export default function ARTryOn({ onBack, faceWidth }) {
         if (reqId !== reqIdRef.current) return;
         
         model = gltf.scene;
-        model.rotation.y = -Math.PI / 2; // Face forward initially
+        model.rotation.y = -Math.PI / 2;
         model.updateMatrixWorld(true);
 
-        // Find depth-aware bounding box (front part only)
         let minZ = Infinity, maxZ = -Infinity;
         model.traverse(ch => {
           if (ch.isMesh) {
@@ -458,17 +411,15 @@ export default function ARTryOn({ onBack, faceWidth }) {
         const targetWidth = 1.9;
         const scaleFac = targetWidth / Math.max(size.x, 0.1);
 
-        // Align bridge (front center) to origin INSIDE the pivot
         model.scale.setScalar(scaleFac);
         model.position.set(-center.x * scaleFac, -center.y * scaleFac, -maxZ * scaleFac);
 
-        // Temple Flexing Logic
         model.traverse(ch => {
           if (ch.isMesh) {
             const name = ch.name.toLowerCase();
             if (name.includes("temple") || name.includes("arm")) {
               const weight = ch.position.x < 0 ? -1 : 1;
-              ch.rotation.y += 0.08 * weight; // Flex outward
+              ch.rotation.y += 0.08 * weight;
             }
           }
         });
@@ -486,12 +437,10 @@ export default function ARTryOn({ onBack, faceWidth }) {
       old.traverse((ch) => { if (ch.geometry) ch.geometry.dispose(); if (ch.material) ch.material.dispose(); });
     }
 
-    // Pivot Strategy: Wrap in Group
     const pivot = new THREE.Group();
     pivot.add(model);
     pivot.visible = false;
 
-    /* store original opacities NOW before any render-loop modification */
     pivot.traverse(child => {
       if (child.isMesh && child.material) {
         child.material.userData._baseOpacity = child.material.opacity !== undefined ? child.material.opacity : 1;
@@ -503,14 +452,49 @@ export default function ARTryOn({ onBack, faceWidth }) {
     sceneRef.current.glasses = pivot;
   }, [gltfLoader]);
 
-  /* ── rebuild when frame/color changes ── */
+  /* ── Update colors without rebuilding geometry ── */
+  const updateGlassesColor = useCallback((fIdx, cIdx) => {
+    const { glasses } = sceneRef.current;
+    if (!glasses) return;
+
+    const f = AR_FRAMES[fIdx];
+    const color = f.colors[cIdx];
+    if (!color) return;
+
+    glasses.traverse((ch) => {
+      if (!ch.isMesh || !ch.material) return;
+      
+      const part = ch.userData.partName || "";
+      const materials = Array.isArray(ch.material) ? ch.material : [ch.material];
+
+      materials.forEach(mat => {
+        if (!mat.color) return;
+        if (part.includes("lens")) {
+          mat.color.setHex(color.lens);
+        } else if (part.includes("hinge") || part.includes("pad")) {
+          mat.color.setHex(color.accent);
+        } else if (part) {
+          mat.color.setHex(color.frame);
+        } else if (f.url) {
+          mat.color.setHex(color.frame);
+        }
+      });
+    });
+  }, []);
+
+  /* ── Effect to smartly route rebuilds vs color paints ── */
   useEffect(() => {
-    if (sceneRef.current.scene) {
+    if (!sceneRef.current.scene) return;
+
+    if (prevFrameIdxRef.current !== frameIdx) {
       buildGlasses(frameIdx, colorIdx);
       filterBankRef.current.reset();
       glassesOpacityRef.current = 0;
+      prevFrameIdxRef.current = frameIdx;
+    } else {
+      updateGlassesColor(frameIdx, colorIdx);
     }
-  }, [frameIdx, colorIdx, buildGlasses]);
+  }, [frameIdx, colorIdx, buildGlasses, updateGlassesColor]);
 
   /* ── initialize MediaPipe ── */
   const initFaceLandmarker = useCallback(async () => {
@@ -598,7 +582,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
 
     const scene = new THREE.Scene();
 
-    /* lighting — balanced for transparent overlay */
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const key = new THREE.DirectionalLight(0xffffff, 1.2);
     key.position.set(1, 2, 3);
@@ -628,8 +611,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
     let lastTime = -1;
     let noFaceFrames = 0;
 
-    /* quaternion for smooth rotation interpolation */
-    const currentQuat = new THREE.Quaternion();
     const targetQuat = new THREE.Quaternion();
     const euler = new THREE.Euler(0, 0, 0, "ZYX");
 
@@ -637,14 +618,12 @@ export default function ARTryOn({ onBack, faceWidth }) {
       rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2) return;
 
-      /* avoid duplicate timestamps from rAF */
       if (now === lastTime) return;
       lastTime = now;
 
       const { renderer, scene, camera, zDist, glasses } = sceneRef.current;
       if (!renderer || !glasses) return;
 
-      /* resize canvas to match video */
       const vw = video.videoWidth;
       const vh = video.videoHeight;
       if (vCanvas.width !== vw || vCanvas.height !== vh) {
@@ -658,13 +637,11 @@ export default function ARTryOn({ onBack, faceWidth }) {
         sceneRef.current.vWidth = newVH * camera.aspect;
       }
 
-      /* draw mirrored video */
       vCtx.save();
       vCtx.scale(-1, 1);
       vCtx.drawImage(video, -vw, 0, vw, vh);
       vCtx.restore();
 
-      /* detect face */
       const result = fl.detectForVideo(video, now);
       const hasFace = result.faceLandmarks && result.faceLandmarks.length > 0;
 
@@ -677,9 +654,8 @@ export default function ARTryOn({ onBack, faceWidth }) {
         const faceMatrix = result.facialTransformationMatrixes?.[0] || null;
         const pose = extractFacePose(landmarks, sceneRef.current.vWidth, sceneRef.current.vHeight, faceMatrix, faceWidth);
         const fb = filterBankRef.current;
-        const t = now; /* timestamp for filters */
+        const t = now;
 
-        /* apply One Euro Filters per channel */
         const fpx    = fb.filter("px",    pose.px,          t);
         const fpy    = fb.filter("py",    pose.py,          t);
         const fscale = fb.filter("scale", pose.scale,       t);
@@ -688,30 +664,19 @@ export default function ARTryOn({ onBack, faceWidth }) {
         const fpitch = fb.filter("pitch", pose.pitch,       t);
         const fdepth = fb.filter("depth", pose.depthOffset, t);
 
-        /* position */
         glasses.position.set(fpx, fpy, -zDist + fdepth);
-
-        /* scale */
         glasses.scale.setScalar(fscale);
 
-        /* rotation via quaternion slerp for buttery interpolation */
         euler.set(fpitch, fyaw, froll);
         targetQuat.setFromEuler(euler);
 
-        /* slerp current towards target — this adds one more layer of smoothness
-           on top of the One Euro filter, specifically for rotation which is
-           most noticeable when jittery */
         if (glasses.quaternion.dot(targetQuat) < 0) {
-          targetQuat.x *= -1;
-          targetQuat.y *= -1;
-          targetQuat.z *= -1;
-          targetQuat.w *= -1;
+          targetQuat.x *= -1; targetQuat.y *= -1; targetQuat.z *= -1; targetQuat.w *= -1;
         }
         glasses.quaternion.slerp(targetQuat, 0.8);
 
       } else {
         noFaceFrames++;
-        /* fade out after ~10 frames (~0.3s) of no face */
         if (noFaceFrames > 10) {
           targetOpacityRef.current = 0;
           if (noFaceFrames > 25) {
@@ -721,13 +686,11 @@ export default function ARTryOn({ onBack, faceWidth }) {
         }
       }
 
-      /* smooth opacity transitions (fade in/out glasses) */
       const opacitySpeed = targetOpacityRef.current > glassesOpacityRef.current ? 0.3 : 0.1;
       glassesOpacityRef.current += (targetOpacityRef.current - glassesOpacityRef.current) * opacitySpeed;
 
       if (glassesOpacityRef.current > 0.01) {
         glasses.visible = true;
-        /* apply opacity to all materials */
         glasses.traverse(child => {
           if (child.isMesh && child.material) {
             child.material.opacity = child.material.userData?._baseOpacity != null
@@ -771,12 +734,10 @@ export default function ARTryOn({ onBack, faceWidth }) {
     const displayH = container?.clientHeight || videoRef.current.videoHeight;
 
     initThreeJS(displayW, displayH);
-    buildGlasses(frameIdx, colorIdx);
     startLoop();
     setStatus("live");
-  }, [initFaceLandmarker, startCamera, initThreeJS, buildGlasses, startLoop, frameIdx, colorIdx]);
+  }, [initFaceLandmarker, startCamera, initThreeJS, startLoop]);
 
-  /* auto-start on mount */
   useEffect(() => {
     handleStart();
     return cleanup;
@@ -806,7 +767,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
     setStatus("captured");
   }, []);
 
-  /* ── download captured photo ── */
   const handleDownload = useCallback(() => {
     if (!capturedImage) return;
     const a = document.createElement("a");
@@ -815,13 +775,11 @@ export default function ARTryOn({ onBack, faceWidth }) {
     a.click();
   }, [capturedImage, frameIdx]);
 
-  /* ── dismiss capture and go back to live ── */
   const handleDismissCapture = useCallback(() => {
     setCapturedImage(null);
     setStatus("live");
   }, []);
 
-  /* ── handle resize ── */
   useEffect(() => {
     const onResize = () => {
       const { renderer, camera, fov, zDist } = sceneRef.current;
@@ -847,8 +805,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
      ═══════════════════════════════════════════════════════════ */
   return (
     <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
-
-      {/* HEADER */}
       <section style={{ paddingTop: 36, paddingBottom: 24, textAlign: "center" }}>
         <p style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", opacity: 0.3, marginBottom: 10, fontWeight: 600 }}>
           Augmented Reality
@@ -861,7 +817,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
         </p>
       </section>
 
-      {/* AR VIEWPORT */}
       <div style={{
         position: "relative", width: "100%", maxWidth: 640, margin: "0 auto",
         aspectRatio: "4/3", borderRadius: 20, overflow: "hidden",
@@ -974,7 +929,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
         )}
       </div>
 
-      {/* ══════════════ CONTROLS BELOW VIEWPORT ══════════════ */}
       {(status === "live" || status === "captured") && (
         <div style={{ maxWidth: 640, margin: "0 auto", animation: "arSlideUp 0.4s ease both" }}>
 
@@ -1038,23 +992,6 @@ export default function ARTryOn({ onBack, faceWidth }) {
               </button>
             </div>
           )}
-
-          <div style={{ marginTop: 32, padding: "16px 20px", borderRadius: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
-            <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.2, margin: "0 0 8px", fontWeight: 600 }}>How It Works</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
-              {[
-                { n: "01", t: "Track", d: "468 facial landmarks detected at 30fps using MediaPipe Face Mesh" },
-                { n: "02", t: "Filter", d: "One Euro Filters adapt smoothing per channel — fast when you move, stable when still" },
-                { n: "03", t: "Render", d: "Quaternion slerp rotation and Three.js overlay create filter-quality tracking" },
-              ].map((s, i) => (
-                <div key={i}>
-                  <p style={{ fontSize: 9, opacity: 0.2, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 3px" }}>{s.n}</p>
-                  <p style={{ fontSize: 11, fontWeight: 600, margin: "0 0 3px" }}>{s.t}</p>
-                  <p style={{ fontSize: 10, opacity: 0.3, margin: 0, lineHeight: 1.5 }}>{s.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
     </div>
