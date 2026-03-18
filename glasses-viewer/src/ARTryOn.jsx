@@ -734,6 +734,8 @@ export default function ARTryOn({ onBack, faceWidth }) {
     const displayH = container?.clientHeight || videoRef.current.videoHeight;
 
     initThreeJS(displayW, displayH);
+    buildGlasses(frameIdx, colorIdx);     
+    prevFrameIdxRef.current = frameIdx;     
     startLoop();
     setStatus("live");
   }, [initFaceLandmarker, startCamera, initThreeJS, startLoop]);
