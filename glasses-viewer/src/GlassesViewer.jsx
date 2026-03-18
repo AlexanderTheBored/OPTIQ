@@ -4,6 +4,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import ImpactPage from "./ImpactPage";
 import FitScanner from "./FitScanner";
 import ARTryOn from "./ARTryOn";
+import FlowingMenu from "./FlowingMenu";
+import useFrameThumbnails from "./useFrameThumbnails";
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
