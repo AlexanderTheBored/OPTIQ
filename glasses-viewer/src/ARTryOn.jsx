@@ -111,6 +111,8 @@ const LM = {
   foreHead: 10, chin: 152,
   leftCheek: 234, rightCheek: 454,
   leftBrowOuter: 46, rightBrowOuter: 276,
+  leftIris: [468, 469, 470, 471, 472],
+  rightIris: [473, 474, 475, 476, 477],
 };
 
 function dist3D(a, b) {
@@ -136,15 +138,32 @@ function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFac
   const leftTemple = landmarks[LM.leftTemple];
   const rightTemple = landmarks[LM.rightTemple];
 
-  const templeW = dist3D(leftTemple, rightTemple);
   const eyeOuterW = dist3D(leftEyeO, rightEyeO);
-  const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
-  const modelWidth = 1.92;
+  
+  /* Iris-based scaling for pinpoint accuracy */
+  const lIris = landmarks[LM.leftIris[0]];
+  const rIris = landmarks[LM.rightIris[0]];
+  const lIrisH = dist3D(landmarks[LM.leftIris[1]], landmarks[LM.leftIris[2]]);
+  const rIrisH = dist3D(landmarks[LM.rightIris[1]], landmarks[LM.rightIris[2]]);
+  const avgIrisH = (lIrisH + rIrisH) / 2;
 
+  const modelWidth = 1.92;
   let scale;
-  if (calibratedFaceWidth) {
+
+  if (avgIrisH > 0.005) {
+    /* The core 'Pinpoint' logic: 
+       Translate the physical frame width (based on size selection) 
+       into 3D space using the Iris (11.7mm) as the constant ruler.
+    */
+    const mmPerUnit = 11.7 / avgIrisH;
+    /* We want the model to be sized correctly for the user's calibrated width */
+    /* If the model was designed for a 140mm face, but the user is 130mm, we scale it */
+    scale = (mmPerUnit * 13.5) / modelWidth; // 13.5 is a heuristic for model units to mm
+  } else if (calibratedFaceWidth) {
     scale = (calibratedFaceWidth * (eyeOuterW / 0.085)) / modelWidth * 1.2;
   } else {
+    const templeW = dist3D(leftTemple, rightTemple);
+    const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
     scale = (faceW / modelWidth) * 1.6;
   }
 

@@ -28,16 +28,20 @@ const LANDMARK = {
   chinBottom: 152,
   noseBridgeTop: 6,
   noseTip: 4,
+  /* Iris landmarks (MediaPipe V2) */
+  leftIris: [468, 469, 470, 471, 472],
+  rightIris: [473, 474, 475, 476, 477],
 };
 
 function dist(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z || 0) - (b.z || 0)) ** 2);
 }
 
-/* convert normalized landmark distance to approximate mm using IPD as reference */
-/* average adult inter-pupillary distance is ~63mm */
-function computeMeasurements(landmarks) {
+/* convert normalized landmark distance to approximate mm using Iris or Manual IPD as reference */
+/* average adult iris diameter is ~11.7mm */
+function computeMeasurements(landmarks, options = {}) {
   const lm = (idx) => landmarks[idx];
+  const { manualIPD = null } = options;
 
   const leftEyeOuter = lm(LANDMARK.leftEyeOuter);
   const rightEyeOuter = lm(LANDMARK.rightEyeOuter);
@@ -50,9 +54,26 @@ function computeMeasurements(landmarks) {
   const leftCheek = lm(LANDMARK.leftCheek);
   const rightCheek = lm(LANDMARK.rightCheek);
 
-  /* use distance between outer eye corners as calibration reference (~85mm average) */
-  const eyeOuterDist = dist(leftEyeOuter, rightEyeOuter);
-  const mmPerUnit = 85 / eyeOuterDist;
+  /* Iris-based calibration (Natural Ruler) */
+  const lIris = LANDMARK.leftIris;
+  const rIris = LANDMARK.rightIris;
+  const lIrisDiam = dist(lm(lIris[1]), lm(lIris[2])); /* horizontal */
+  const rIrisDiam = dist(lm(rIris[1]), lm(rIris[2])); /* horizontal */
+  const avgIrisDiamUnits = (lIrisDiam + rIrisDiam) / 2;
+
+  /* Calibration logic: Manual IPD > Iris Auto > Statistical fallback */
+  let mmPerUnit;
+  if (manualIPD && manualIPD > 0) {
+    /* distance between pupil centers */
+    const ipdUnits = dist(lm(lIris[0]), lm(rIris[0]));
+    mmPerUnit = manualIPD / ipdUnits;
+  } else if (avgIrisDiamUnits > 0.001) {
+    mmPerUnit = 11.7 / avgIrisDiamUnits;
+  } else {
+    /* fallback to statistical average eye distance if iris not clear */
+    const eyeOuterDist = dist(leftEyeOuter, rightEyeOuter);
+    mmPerUnit = 85 / eyeOuterDist;
+  }
 
   const faceWidth = dist(leftTemple, rightTemple) * mmPerUnit;
   const bridgeWidth = dist(leftEyeInner, rightEyeInner) * mmPerUnit;
@@ -74,6 +95,7 @@ function computeMeasurements(landmarks) {
     cheekWidth: Math.round(cheekWidth),
     faceShape,
     ratio: ratio.toFixed(2),
+    mmPerUnit,
   };
 }
 
@@ -176,6 +198,8 @@ export default function FitScanner({ onApplyFit }) {
   const [cameraError, setCameraError] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [countdownValue, setCountdownValue] = useState(3);
+  const [manualIPD, setManualIPD] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
   const SAMPLES_NEEDED = 20;
 
@@ -326,7 +350,7 @@ export default function FitScanner({ onApplyFit }) {
         ctx.restore();
 
         /* accumulate stable samples */
-        const m = computeMeasurements(landmarks);
+        const m = computeMeasurements(landmarks, { manualIPD: parseFloat(manualIPD) });
         samples.push(m);
         setScanProgress(Math.min(samples.length / SAMPLES_NEEDED, 1));
 
@@ -449,8 +473,51 @@ export default function FitScanner({ onApplyFit }) {
           Face Fit Scanner
         </h1>
         <p style={{ fontSize: 14, opacity: 0.4, maxWidth: 480, margin: "0 auto" }}>
-          Our AI measures your face in real-time using MediaPipe Face Mesh to recommend the perfect frame size and style. No optician visit needed.
+          Our AI measures your face in real-time using MediaPipe Iris detection to recommend the perfect frame size and style. No optician visit needed.
         </p>
+
+        {/* SETTINGS TOGGLE */}
+        <div style={{ marginTop: 20 }}>
+          <button 
+            onClick={() => setShowSettings(!showSettings)}
+            style={{
+              background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 20, padding: "6px 16px", color: "rgba(255,255,255,0.5)",
+              fontSize: 11, fontWeight: 600, cursor: "pointer", letterSpacing: 1,
+              textTransform: "uppercase", transition: "all 0.3s"
+            }}
+          >
+            {showSettings ? "✕ Close Settings" : "⚙ Accuracy Settings"}
+          </button>
+        </div>
+
+        {showSettings && (
+          <div style={{ 
+            marginTop: 16, padding: 16, borderRadius: 12, 
+            background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+            maxWidth: 320, margin: "16px auto 0", textAlign: "left"
+          }}>
+            <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px", color: "#6fcf97" }}>Pinpoint Accuracy</p>
+            <p style={{ fontSize: 11, opacity: 0.4, lineHeight: 1.5, margin: "0 0 12px" }}>
+              By default, we use <strong>Iris Auto-Calibration</strong> (11.7mm reference). If you know your exact Pupillary Distance (IPD), enter it below.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1, opacity: 0.4 }}>Manual IPD (mm)</label>
+              <input 
+                type="number" 
+                placeholder="e.g. 63"
+                value={manualIPD}
+                onChange={(e) => setManualIPD(e.target.value)}
+                style={{
+                  background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 13,
+                  outline: "none", width: "100%", boxSizing: "border-box"
+                }}
+              />
+              <p style={{ fontSize: 9, opacity: 0.3, margin: "4px 0 0" }}>Leave blank for Iris Auto-Mode</p>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* CAMERA VIEWPORT */}
