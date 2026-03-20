@@ -810,12 +810,12 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             {isMobile ? "Drag to rotate · Pinch to zoom" : "Drag to rotate · Scroll to zoom"}
           </p>
 
-          <div className="gv-price-ticker" style={{ marginTop: 20, padding: isSmall ? "12px 14px" : "16px 20px", borderRadius: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Your Build</p>
-              <p style={{ margin: "4px 0 0", fontSize: isSmall ? 11 : 13, opacity: 0.6 }}>{frame.name} · {material.name} · {lens.name}</p>
-            </div>
-            <div style={{ textAlign: "right" }}>
+            <div className="gv-price-ticker" style={{ marginTop: 20, padding: isSmall ? "12px 14px" : "16px 20px", borderRadius: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Your Build</p>
+                <p style={{ margin: "4px 0 0", fontSize: isSmall ? 11 : 13, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{frame.name} · {material.name} · {lens.name}</p>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
               <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 28, fontWeight: 600 }}>₱{totalPrice.toLocaleString()}</p>
               <p style={{ margin: 0, fontSize: 10, opacity: 0.3 }}>estimated</p>
             </div>
