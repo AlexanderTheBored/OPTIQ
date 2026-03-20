@@ -739,7 +739,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             <span style={{ fontSize: 22, opacity: 0.9, flexShrink: 0 }}>◈</span>
             <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 600, letterSpacing: 4, flexShrink: 0 }}>OPTIQ</span>
           </div>
-          <div className="gv-nav-links">
+          <div className="gv-nav-links" style={{ display: "flex", gap: 32 }}>
             {[
               { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
               { label: "AR Try-On", action: () => { setPage("ar"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "ar" },
