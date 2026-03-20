@@ -109,7 +109,10 @@ const AIChatbot = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: messages.map(m => ({ role: m.role, content: m.content }))
+          messages: [
+            ...messages.map(m => ({ role: m.role, content: m.content })),
+            { role: 'user', content: userMessage.content }
+          ]
         }),
       });
 
