@@ -98,6 +98,9 @@ export default function ImpactPage() {
     s.id = id;
     s.textContent = `
       @keyframes gvGradientSweep { 0% { background-position: 0% 50% } 100% { background-position: 200% 50% } }
+      @media (max-width: 480px) {
+        .impact-cost-grid { grid-template-columns: 1fr !important; }
+      }
     `;
     document.head.appendChild(s);
   }, []);
@@ -133,7 +136,7 @@ export default function ImpactPage() {
       </section>
 
       {/* STATS */}
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 80 }}>
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 16, marginBottom: 80 }}>
         {[
           { target: 82, suffix: "%", label: "Less CO2 vs virgin plastic", color: "#6fcf97" },
           { target: 12, suffix: " caps", label: "Recycled per pair", color: "#4ecdc4" },
@@ -196,7 +199,7 @@ export default function ImpactPage() {
           </h2>
         </AnimatedContent>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div className="impact-cost-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <AnimatedContent direction="left" delay={0.1}>
             <div style={{
               padding: "28px 24px", borderRadius: 16,
