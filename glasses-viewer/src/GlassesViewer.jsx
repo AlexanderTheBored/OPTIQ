@@ -7,6 +7,8 @@ import ARTryOn from "./ARTryOn";
 
 import FlowingMenu from "./FlowingMenu";
 import useFrameThumbnails from "./useFrameThumbnails";
+import InfiniteMenu from "./InfiniteMenu";
+import { generateLensImages } from "./lensImages";
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
@@ -302,6 +304,16 @@ export default function GlassesViewer() {
       isCustom: !!f.url,
     })),
     [frameThumbnails]
+  );
+
+  const lensImages = useMemo(() => generateLensImages(LENS_TYPES), []);
+  const infiniteMenuLensItems = useMemo(() =>
+    LENS_TYPES.map((lt, i) => ({
+      image: lensImages[i],
+      title: lt.name,
+      description: lt.desc,
+    })),
+    [lensImages]
   );
 
   useParticles(particleCanvasRef, color.particle);
@@ -831,23 +843,18 @@ export default function GlassesViewer() {
 
             {step === 2 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Select your lens</h2>
-              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>All lenses are scratch-resistant polycarbonate with UV protection.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {LENS_TYPES.map((lt, i) => (
-                  <OptCard key={lt.id} selected={lensIdx === i} onClick={() => setLensIdx(i)}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: hex(lt.tint.color), opacity: 0.4 + (1 - lt.tint.transmission) * 0.6, border: "1px solid rgba(255,255,255,0.15)", flexShrink: 0 }} />
-                        <div style={{ minWidth: 0 }}>
-                          <span style={{ fontSize: isSmall ? 13 : 15, fontWeight: 500 }}>{lt.name}</span>
-                          <p style={{ margin: "2px 0 0", fontSize: 12, opacity: 0.4 }}>{lt.desc}</p>
-                        </div>
-                      </div>
-                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", flexShrink: 0 }}>{lt.price === 0 ? "included" : `+₱${lt.price}`}</span>
-                    </div>
-                  </OptCard>
-                ))}
+              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 16px" }}>All lenses are scratch-resistant polycarbonate with UV protection.</p>
+              <div style={{ height: isSmall ? 280 : 340, position: "relative", borderRadius: 16, overflow: "hidden", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.15)" }}>
+                <InfiniteMenu items={infiniteMenuLensItems} scale={isSmall ? 0.6 : 0.75} onActiveItemChange={(i) => setLensIdx(i)} />
               </div>
+              <div style={{ marginTop: 12, padding: "10px 16px", borderRadius: 10, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>{LENS_TYPES[lensIdx].name}</span>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, opacity: 0.4 }}>{LENS_TYPES[lensIdx].desc}</p>
+                </div>
+                <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>{LENS_TYPES[lensIdx].price === 0 ? "included" : `+₱${LENS_TYPES[lensIdx].price}`}</span>
+              </div>
+              <p style={{ fontSize: 10, opacity: 0.2, marginTop: 8, textAlign: "center", letterSpacing: 1.5, textTransform: "uppercase" }}>{isMobile ? "Drag to rotate" : "Drag to rotate the sphere"}</p>
             </>)}
 
             {step === 3 && (<>
