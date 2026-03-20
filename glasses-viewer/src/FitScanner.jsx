@@ -223,7 +223,7 @@ export default function FitScanner({ onApplyFit }) {
     try {
       const isMobile = window.matchMedia("(max-width: 840px)").matches || /Mobi|Android/i.test(navigator.userAgent);
       const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
       );
       const fl = await FaceLandmarker.createFromOptions(vision, {
         baseOptions: {
