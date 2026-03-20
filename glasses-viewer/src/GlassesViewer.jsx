@@ -11,6 +11,10 @@ import FlowingMenu from "./FlowingMenu";
 import useFrameThumbnails from "./useFrameThumbnails";
 import InfiniteMenu from "./InfiniteMenu";
 import { generateLensImages } from "./lensImages";
+import { loadStripe } from '@stripe/stripe-js';
+
+// Hardcoded for GitHub collaborators (Safe to expose public/publishable keys)
+const stripePromise = loadStripe("pk_test_51TD2emLLHEmstBQRAAphOfyi1ModHUf3mIHH1oDGWzWeX6P3CUHUN8qdI7YAPBzICi32Z8p3Kblf5JU6IR7TXlNy00pNJMv59F");
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;
@@ -290,6 +294,7 @@ export default function GlassesViewer() {
   const [colorIdx, setColorIdx] = useState(0);
   const [sizeIdx, setSizeIdx] = useState(1);
   const [calibratedFaceWidth, setCalibratedFaceWidth] = useState(null);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState("configurator");
@@ -307,6 +312,32 @@ export default function GlassesViewer() {
   const size = SIZES[sizeIdx];
 
   const totalPrice = useMemo(() => frame.basePrice + material.price + lens.price, [frame, material, lens]);
+
+  const handleCheckout = async () => {
+    setIsCheckingOut(true);
+    try {
+      const response = await fetch("https://optiq.lloydthomas54321.workers.dev/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${frame.name} (${material.name}, ${lens.name})`,
+          price: totalPrice
+        })
+      });
+      const session = await response.json();
+      if (session.error) throw new Error(session.error.message || session.error);
+      
+      if (session.url) {
+        window.location.href = session.url;
+      } else {
+        throw new Error("No checkout URL returned from worker.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Checkout error: " + err.message);
+      setIsCheckingOut(false);
+    }
+  };
 
   const frameThumbnails = useFrameThumbnails(FRAMES, MATERIALS[0].pbr);
 
@@ -989,7 +1020,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
                 <span style={{ fontSize: 14, fontWeight: 500 }}>Total</span>
                 <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 600 }} className="gv-price-val"><span className="gv-currency">₱</span>{totalPrice.toLocaleString()}</span>
               </div>
-              <button className="gv-cta" style={{ width: "100%", padding: "18px 0", background: "rgba(255,255,255,0.92)", color: "#000", border: "none", borderRadius: 12, fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer", transition: "all 0.4s cubic-bezier(0.23,1,0.32,1)" }}>Order Custom Pair</button>
+              <button className="gv-cta" style={{ width: "100%", padding: "18px 0", background: "rgba(255,255,255,0.92)", color: "#000", border: "none", borderRadius: 12, fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", cursor: isCheckingOut ? "wait" : "pointer", transition: "all 0.4s cubic-bezier(0.23,1,0.32,1)", opacity: isCheckingOut ? 0.7 : 1 }} onClick={handleCheckout} disabled={isCheckingOut}>{isCheckingOut ? "Preparing Checkout..." : "Order Custom Pair"}</button>
             </>)}
           </div>
 

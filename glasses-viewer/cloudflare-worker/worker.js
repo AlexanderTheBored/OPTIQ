@@ -47,6 +47,39 @@ export default {
       return new Response("Method not allowed", { status: 405 });
     }
 
+    const url = new URL(request.url);
+
+    if (url.pathname === "/create-checkout-session") {
+      let body;
+      try { body = await request.json(); } catch { return new Response("Invalid JSON", { status: 400 }); }
+
+      const { name, price } = body;
+      
+      let formParams = new URLSearchParams();
+      formParams.append('line_items[0][price_data][currency]', 'php');
+      formParams.append('line_items[0][price_data][product_data][name]', name || 'Custom OPTIQ Glasses');
+      formParams.append('line_items[0][price_data][unit_amount]', Math.round(price * 100).toString());
+      formParams.append('line_items[0][quantity]', '1');
+      formParams.append('mode', 'payment');
+      const origin = request.headers.get('Origin') || 'http://localhost:5173';
+      formParams.append('success_url', origin + '?success=true');
+      formParams.append('cancel_url', origin + '?canceled=true');
+
+      const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formParams
+      });
+
+      const session = await stripeResponse.json();
+      if (!stripeResponse.ok) return new Response(JSON.stringify({ error: session.error }), { status: 400, headers: { "Access-Control-Allow-Origin": ALLOWED_ORIGIN } });
+
+      return new Response(JSON.stringify({ url: session.url }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": ALLOWED_ORIGIN } });
+    }
+
     let body;
     try {
       body = await request.json();
