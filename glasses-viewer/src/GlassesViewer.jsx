@@ -244,6 +244,8 @@ function autoTagGLBMeshes(model) {
    ═══════════════════════════════════════════════════════════ */
 function useParticles(ref,c){const cr=useRef(c);cr.current=c;useEffect(()=>{const cv=ref.current;if(!cv)return;const ctx=cv.getContext("2d");let w,h;const rs=()=>{w=cv.width=window.innerWidth;h=cv.height=window.innerHeight};rs();window.addEventListener("resize",rs);const P=[];for(let i=0;i<50;i++)P.push({x:Math.random()*2000,y:Math.random()*2000,vx:(Math.random()-0.5)*0.3,vy:-Math.random()*0.35-0.1,r:Math.random()*2.5+0.5,a:Math.random()*0.4+0.08,p:Math.random()*Math.PI*2});let raf;const draw=()=>{raf=requestAnimationFrame(draw);ctx.clearRect(0,0,w,h);P.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.p+=0.015;if(p.y<-10){p.y=h+10;p.x=Math.random()*w;}if(p.x<-10)p.x=w+10;if(p.x>w+10)p.x=-10;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=cr.current;ctx.globalAlpha=p.a*(0.5+0.5*Math.sin(p.p));ctx.fill();});ctx.globalAlpha=1;};draw();return()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",rs);};},[ref]);}
 
+const SIZE_SCALES = [0.940, 1.0, 1.060]; // Small=126mm / Medium=134mm / Large=142mm
+
 const STEPS = ["Frame","Material","Lens","Colour","Size","Summary"];
 
 function OptCard({ selected, onClick, children, style = {} }) {
@@ -282,6 +284,7 @@ export default function GlassesViewer() {
   const glbCacheRef = useRef({}); // { url: processedSceneClone }
   const swapRef = useRef(null); // Current transition interval
   const spinRef = useRef(false);
+  const sizeScaleRef = useRef(1.0);
 
   const vw = useViewportWidth();
   const isMobile = vw <= 840;
@@ -304,6 +307,7 @@ export default function GlassesViewer() {
   const [exploded, setExploded] = useState(false);
   const [labelPositions, setLabelPositions] = useState([]);
   const [isSpinning, setIsSpinning] = useState(false);
+  const [diagramDataUrl, setDiagramDataUrl] = useState(null);
 
   const frame = FRAMES[frameIdx];
   const color = frame.colors[colorIdx];
@@ -484,13 +488,13 @@ export default function GlassesViewer() {
         });
         const sIn = Math.min(1, Math.max(0, (t - 0.2) * 2)); 
         const ease = 1 - Math.pow(1 - sIn, 3);
-        pivot.scale.setScalar(ease);
+        pivot.scale.setScalar(ease * sizeScaleRef.current);
         
         if (t >= 1) { 
           clearInterval(swapRef.current); 
           swapRef.current = null;
           setTransitioning(false); 
-          pivot.scale.setScalar(1);
+          pivot.scale.setScalar(sizeScaleRef.current);
         }
       }, 16);
     } else {
@@ -704,6 +708,95 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
     prevFrameRef.current = frameIdx;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameIdx, colorIdx, matIdx, lensIdx]);
+
+  /* ── Silhouette diagram renderer ── */
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderSilhouette = async () => {
+      const W = 560, H = 200;
+      const offR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      offR.setSize(W, H);
+      offR.setPixelRatio(2);
+      offR.setClearColor(0x000000, 0);
+
+      const scene = new THREE.Scene();
+      const aspect = W / H;
+      const fH = 0.82;
+      const camera = new THREE.OrthographicCamera(-fH * aspect, fH * aspect, fH, -fH, 0.1, 20);
+      camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 0);
+
+      // Flat white silhouette material
+      const silMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+
+      const f = FRAMES[frameIdx];
+      let model;
+      try {
+        if (f.url) {
+          let cached = glbCacheRef.current[f.url];
+          if (!cached) {
+            const gltf = await new Promise((res, rej) => gltfLoader.load(f.url, res, undefined, rej));
+            if (cancelled) { offR.dispose(); return; }
+            const lm = gltf.scene;
+            lm.rotation.y = -Math.PI / 2;
+            lm.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(lm);
+            const sz = box.getSize(new THREE.Vector3());
+            const sc = 1.9 / Math.max(sz.x, 0.1);
+            const ctr = box.getCenter(new THREE.Vector3());
+            lm.scale.setScalar(sc);
+            lm.position.set(-ctr.x * sc, -ctr.y * sc, -ctr.z * sc);
+            glbCacheRef.current[f.url] = lm;
+            cached = lm;
+          }
+          model = cached.clone();
+        } else {
+          model = f.build(f.colors[colorIdx], MATERIALS[matIdx].pbr);
+        }
+      } catch (e) {
+        offR.dispose();
+        return;
+      }
+
+      if (cancelled) { offR.dispose(); return; }
+
+      model.traverse(ch => { if (ch.isMesh) ch.material = silMat; });
+      scene.add(model);
+      offR.render(scene, camera);
+
+      if (!cancelled) {
+        setDiagramDataUrl(offR.domElement.toDataURL("image/png"));
+      }
+
+      offR.dispose();
+      scene.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); });
+    };
+
+    setDiagramDataUrl(null); // show loading state while rendering
+    renderSilhouette();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameIdx, gltfLoader]);
+
+  /* ── Size scale animation ── */
+  useEffect(() => {
+    sizeScaleRef.current = SIZE_SCALES[sizeIdx];
+    const pivot = sceneRef.current.pivot;
+    if (!pivot) return;
+    const startScale = pivot.scale.x;
+    const targetScale = SIZE_SCALES[sizeIdx];
+    let t = 0;
+    const id = setInterval(() => {
+      t += 0.05;
+      if (t >= 1) { t = 1; clearInterval(id); }
+      const eased = 1 - Math.pow(1 - t, 3);
+      if (sceneRef.current.pivot) {
+        sceneRef.current.pivot.scale.setScalar(startScale + (targetScale - startScale) * eased);
+      }
+    }, 16);
+    return () => clearInterval(id);
+  }, [sizeIdx]);
 
   /* ── Cinematic step transitions ── */
   useEffect(() => {
@@ -972,30 +1065,45 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
                   </OptCard>
                 ))}
               </div>
-              {(() => {
-                const sc = [0.88, 1.0, 1.1][sizeIdx]; const cx = 140, cy = 46; const sw = size.width;
-                const mx = (x) => cx + (cx - x);
-                return (
-                  <div style={{ marginTop: 16, padding: "18px 14px 12px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}>
-                    <svg viewBox="0 0 280 110" style={{ width: "100%", height: "auto", opacity: 0.4 }}>
-                      <g transform={`translate(${cx},${cy}) scale(${sc}) translate(${-cx},${-cy})`}>
-                        {frame.id === "aviator" && (<><path d={`M72 20 Q105 18 110 46 Q105 78 72 80 Q39 78 34 46 Q39 18 72 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(72)} 20 Q${mx(105)} 18 ${mx(110)} 46 Q${mx(105)} 78 ${mx(72)} 80 Q${mx(39)} 78 ${mx(34)} 46 Q${mx(39)} 18 ${mx(72)} 20Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M110 37 Q${cx} 28 ${mx(110)} 37`} fill="none" stroke="#fff" strokeWidth="1.2" /><path d={`M110 44 Q${cx} 36 ${mx(110)} 44`} fill="none" stroke="#fff" strokeWidth="0.8" /></>)}
-                        {frame.id === "wayfarer" && (<><path d={`M36 28 L108 24 Q113 46 108 68 L36 72 Q30 46 36 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(36)} 28 L${mx(108)} 24 Q${mx(113)} 46 ${mx(108)} 68 L${mx(36)} 72 Q${mx(30)} 46 ${mx(36)} 28Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><rect x="28" y="20" width="224" height="6" rx="2" fill="rgba(255,255,255,0.3)" stroke="#fff" strokeWidth="0.8" /><path d={`M108 34 Q${cx} 26 ${mx(108)} 34`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        {frame.id === "round" && (<><circle cx="72" cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" /><circle cx={mx(72)} cy={cy} r="28" fill="none" stroke="#fff" strokeWidth="1.3" /><path d={`M100 36 Q110 28 120 30 Q160 28 ${mx(100)} 36`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        {frame.id === "cat-eye" && (<><path d={`M38 52 Q36 30 52 24 Q72 18 98 20 Q112 26 110 46 Q108 68 78 74 Q50 74 38 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M${mx(38)} 52 Q${mx(36)} 30 ${mx(52)} 24 Q${mx(72)} 18 ${mx(98)} 20 Q${mx(112)} 26 ${mx(110)} 46 Q${mx(108)} 68 ${mx(78)} 74 Q${mx(50)} 74 ${mx(38)} 52Z`} fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M110 32 Q${cx} 24 ${mx(110)} 32`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        {frame.id === "custom" && (<><rect x="34" y="24" width="76" height="48" rx="12" fill="none" stroke="#fff" strokeWidth="1.4" /><rect x={mx(110)} y="24" width="76" height="48" rx="12" fill="none" stroke="#fff" strokeWidth="1.4" /><path d={`M110 40 Q${cx} 32 ${mx(110)} 40`} fill="none" stroke="#fff" strokeWidth="1.2" /></>)}
-                        <line x1="10" y1={cy} x2="30" y2={cy} stroke="#fff" strokeWidth="0.8" strokeLinecap="round" opacity="0.4" />
-                        <line x1={mx(10)} y1={cy} x2={mx(30)} y2={cy} stroke="#fff" strokeWidth="0.8" strokeLinecap="round" opacity="0.4" />
-                      </g>
-                      <line x1="34" y1="92" x2="110" y2="92" stroke="#fff" strokeWidth="0.6" /><line x1="34" y1="89" x2="34" y2="95" stroke="#fff" strokeWidth="0.6" /><line x1="110" y1="89" x2="110" y2="95" stroke="#fff" strokeWidth="0.6" />
-                      <text x="72" y="102" fill="#fff" fontSize="8" textAnchor="middle" fontFamily="DM Sans" fontWeight="500">{frame.dimensions.lens}</text>
-                      <line x1="112" y1="10" x2="168" y2="10" stroke="#fff" strokeWidth="0.6" /><line x1="112" y1="7" x2="112" y2="13" stroke="#fff" strokeWidth="0.6" /><line x1="168" y1="7" x2="168" y2="13" stroke="#fff" strokeWidth="0.6" />
-                      <text x="140" y="8" fill="#fff" fontSize="8" textAnchor="middle" fontFamily="DM Sans" fontWeight="500">{frame.dimensions.bridge}</text>
-                      <text x="140" y="110" fill="#fff" fontSize="7" textAnchor="middle" fontFamily="DM Sans" opacity="0.45">total width: {sw}</text>
-                    </svg>
-                  </div>
-                );
-              })()}
+              {/* ── Silhouette diagram ── */}
+              <div style={{ marginTop: 16, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", overflow: "hidden" }}>
+                {/* Image area */}
+                <div style={{ position: "relative", padding: "12px 0 4px", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 110 }}>
+                  {diagramDataUrl ? (
+                    <img
+                      src={diagramDataUrl}
+                      alt="Frame silhouette"
+                      style={{
+                        width: "90%",
+                        height: "auto",
+                        display: "block",
+                        opacity: 0.38,
+                        transform: `scale(${SIZE_SCALES[sizeIdx]})`,
+                        transformOrigin: "center center",
+                        transition: "transform 0.45s cubic-bezier(0.23,1,0.32,1)",
+                      }}
+                    />
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.25, fontSize: 11 }}>
+                      <div style={{ width: 14, height: 14, border: "1.5px solid rgba(255,255,255,0.4)", borderTopColor: "#fff", borderRadius: "50%", animation: "gvSpin 0.8s linear infinite" }} />
+                      Rendering diagram...
+                    </div>
+                  )}
+                </div>
+                {/* Dimension labels */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: "1px solid rgba(255,255,255,0.04)", padding: "10px 0" }}>
+                  {[
+                    { label: "Lens", val: frame.dimensions.lens },
+                    { label: "Bridge", val: frame.dimensions.bridge },
+                    { label: "Total Width", val: size.width },
+                  ].map((d, i) => (
+                    <div key={i} style={{ textAlign: "center", padding: "0 8px", borderLeft: i > 0 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                      <p style={{ margin: 0, fontSize: 9, opacity: 0.3, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: 600 }}>{d.label}</p>
+                      <p style={{ margin: "3px 0 0", fontSize: 13, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{d.val}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </>)}
 
             {step === 5 && (<>
