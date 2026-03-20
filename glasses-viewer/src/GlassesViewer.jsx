@@ -775,23 +775,40 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       <div className="gv-main" style={{ flex: page === "configurator" ? 1 : "0 0 0px", maxWidth: 1200, width: "100%", margin: "0 auto", padding: isSmall ? "12px 12px" : "24px 24px", display: "flex", height: page === "configurator" ? "auto" : 0, overflow: page === "configurator" ? "visible" : "hidden", visibility: page === "configurator" ? "visible" : "hidden", pointerEvents: page === "configurator" ? "auto" : "none", gap: isMobile ? 20 : 40, alignItems: "flex-start", flexWrap: "wrap", boxSizing: "border-box" }}>
         {/* 3D VIEWPORT */}
         <div className="gv-viewport-wrap" style={{ flex: "1 1 480px", minWidth: 0, position: "relative", width: "100%" }}>
-          <div style={{ position: "relative", overflow: "hidden", borderRadius: isMobile ? 14 : 20 }}>
+          <div style={{ position: "relative" }}>
             <div ref={mountRef} style={{ width: "100%", aspectRatio: "4 / 3", borderRadius: isMobile ? 14 : 20, overflow: "hidden", cursor: "grab", opacity: loaded ? 1 : 0, transition: "opacity 1.2s cubic-bezier(0.4,0,0.2,1)", boxShadow: "0 0 80px rgba(0,0,0,0.3)", touchAction: "none", background: "radial-gradient(ellipse at 40% 35%, rgba(28,28,52,0.95) 0%, rgba(5,5,14,1) 100%)" }} />
             {exploded && labelPositions.length > 0 && (
               <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>
                 {labelPositions.map((lp, i) => {
-                  const cx = mountRef.current?.clientWidth / 2 || 300;
-                  const cy = mountRef.current?.clientHeight / 2 || 225;
+                  const containerW = mountRef.current?.clientWidth || 600;
+                  const containerH = mountRef.current?.clientHeight || 450;
+                  const cx = containerW / 2;
+                  const cy = containerH / 2;
                   const angle = Math.atan2(lp.y - cy, lp.x - cx);
-                  const lx = lp.x + Math.cos(angle) * labelOffset;
-                  const ly = lp.y + Math.sin(angle) * labelOffset;
-                  const ta = lx > cx ? "start" : "end";
+
+                  // Raw label endpoint pushed outward from center
+                  const rawLx = lp.x + Math.cos(angle) * labelOffset;
+                  const rawLy = lp.y + Math.sin(angle) * labelOffset;
+
+                  // Clamp endpoint so the dot never exits the viewport
+                  const edgePad = 8;
+                  const lx = Math.max(edgePad, Math.min(containerW - edgePad, rawLx));
+                  const ly = Math.max(edgePad, Math.min(containerH - edgePad, rawLy));
+
+                  // Flip text anchor when near an edge so text always has room
+                  // approxTextW covers the longest label + 10px offset
+                  const approxTextW = 115;
+                  const ta = (containerW - lx < approxTextW) ? "end"
+                           : (lx < approxTextW)              ? "start"
+                           : (rawLx > cx ? "start" : "end");
+
+                  const tx = lx + (ta === "start" ? 10 : -10);
                   return (
                     <g key={lp.name} style={{ animation: `gvLabelIn 0.5s ease ${0.1 * i}s both` }}>
                       <line className="gv-label-line" x1={lp.x} y1={lp.y} x2={lx} y2={ly} stroke="rgba(255,255,255,0.4)" strokeWidth="1" style={{ animationDelay: `${0.1 * i}s` }} />
                       <circle cx={lp.x} cy={lp.y} r="3" fill="rgba(255,255,255,0.9)" />
-                      <text x={lx + (ta === "start" ? 10 : -10)} y={ly - 6} fill="white" fontSize={isSmall ? "9" : "11"} fontWeight="600" fontFamily="DM Sans" textAnchor={ta} letterSpacing="1" style={{ textTransform: "uppercase" }}>{lp.label}</text>
-                      <text x={lx + (ta === "start" ? 10 : -10)} y={ly + 9} fill="rgba(255,255,255,0.4)" fontSize={isSmall ? "8" : "9"} fontFamily="DM Sans" textAnchor={ta}>{lp.detail}</text>
+                      <text x={tx} y={ly - 6} fill="white" fontSize={isSmall ? "9" : "11"} fontWeight="600" fontFamily="DM Sans" textAnchor={ta} letterSpacing="1" style={{ textTransform: "uppercase" }}>{lp.label}</text>
+                      <text x={tx} y={ly + 9} fill="rgba(255,255,255,0.4)" fontSize={isSmall ? "8" : "9"} fontFamily="DM Sans" textAnchor={ta}>{lp.detail}</text>
                     </g>
                   );
                 })}
