@@ -739,7 +739,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             <span style={{ fontSize: 22, opacity: 0.9, flexShrink: 0 }}>◈</span>
             <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 600, letterSpacing: 4, flexShrink: 0 }}>OPTIQ</span>
           </div>
-          <div className="gv-nav-links" style={{ display: "flex", gap: 32 }}>
+          <div className="gv-nav-links" style={{ display: isMobile ? "none" : "flex", gap: 32 }}>
             {[
               { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
               { label: "AR Try-On", action: () => { setPage("ar"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "ar" },
@@ -752,7 +752,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               </button>
             ))}
           </div>
-          <button className="gv-hamburger" onClick={() => setMenuOpen(!menuOpen)} style={{ flexDirection: "column", gap: 5, background: "none", border: "none", cursor: "pointer", padding: 8 }}>
+          <button className="gv-hamburger" onClick={() => setMenuOpen(!menuOpen)} style={{ flexDirection: "column", gap: 5, background: "none", border: "none", cursor: "pointer", padding: 8, display: isMobile ? "flex" : "none" }}>
             {[0,1,2].map(i => <span key={i} style={{ width: 22, height: 1.5, background: "#fff", borderRadius: 2, transition: "all 0.3s", display: "block", ...(i === 0 && menuOpen ? { transform: "rotate(45deg) translate(4px,4px)" } : i === 1 && menuOpen ? { opacity: 0 } : i === 2 && menuOpen ? { transform: "rotate(-45deg) translate(4px,-4px)" } : {}) }} />)}
           </button>
         </div>
