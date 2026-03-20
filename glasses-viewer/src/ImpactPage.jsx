@@ -136,8 +136,8 @@ export default function ImpactPage() {
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 80 }}>
         {[
           { target: 82, suffix: "%", label: "Less CO2 vs virgin plastic", color: "#6fcf97" },
-          { target: 3, suffix: " caps", label: "Recycled per pair", color: "#4ecdc4" },
-          { target: 29, prefix: "$", suffix: "", label: "Average pair cost", color: "#a8edea" },
+          { target: 12, suffix: " caps", label: "Recycled per pair", color: "#4ecdc4" },
+          { target: 300, prefix: "₱", suffix: "", label: "Average pair cost", color: "#a8edea" },
           { target: 15, suffix: "g", label: "Plastic per frame", color: "#6fcf97" },
         ].map((stat, i) => (
           <AnimatedContent key={i} delay={i * 0.1}>
@@ -204,11 +204,11 @@ export default function ImpactPage() {
             }}>
               <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.4, margin: "0 0 16px", fontWeight: 600, color: "#ff6b6b" }}>Traditional Eyewear</p>
               {[
-                ["Frame manufacturing", "$15-40"],
-                ["Lens grinding", "$20-80"],
-                ["Retail markup", "$50-150"],
-                ["Optician visit", "$30-100"],
-                ["Total", "$115-370"],
+                ["Frame manufacturing", "₱2,500"],
+                ["Lens grinding", "₱3,500"],
+                ["Retail markup", "₱4,500"],
+                ["Optician visit", "₱1,000"],
+                ["Total", "₱11,500"],
               ].map(([label, cost], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < 4 ? "1px solid rgba(255,255,255,0.04)" : "none", opacity: i === 4 ? 1 : 0.5 }}>
                   <span style={{ fontSize: 13, fontWeight: i === 4 ? 600 : 400 }}>{label}</span>
@@ -225,11 +225,11 @@ export default function ImpactPage() {
             }}>
               <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.5, margin: "0 0 16px", fontWeight: 600, color: "#6fcf97" }}>OPTIQ (3D Printed)</p>
               {[
-                ["Recycled filament", "$0.50"],
-                ["3D print time", "$2-4"],
-                ["Lens (polycarbonate)", "$8-20"],
-                ["AI fitting (no optician)", "$0"],
-                ["Total", "$10-24"],
+                ["Recycled filament", "₱25"],
+                ["3D print time", "₱100"],
+                ["Prescription Lenses", "₱175"],
+                ["AI fitting (no optician)", "₱0"],
+                ["Total", "₱300"],
               ].map(([label, cost], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < 4 ? "1px solid rgba(255,255,255,0.04)" : "none", opacity: i === 4 ? 1 : 0.5 }}>
                   <span style={{ fontSize: 13, fontWeight: i === 4 ? 600 : 400 }}>{label}</span>

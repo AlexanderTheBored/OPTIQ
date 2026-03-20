@@ -164,7 +164,7 @@ function MenuItem({
           {subtitle && <span className="menu__item-subtitle">{subtitle}</span>}
         </span>
         {price !== undefined && (
-          <span className="menu__item-price">${price}</span>
+          <span className="menu__item-price">₱{price.toLocaleString()}</span>
         )}
       </a>
       <div className="marquee" ref={marqueeRef} style={{ backgroundColor: marqueeBgColor }}>

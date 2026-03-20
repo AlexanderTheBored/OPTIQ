@@ -24,20 +24,20 @@ if (typeof document !== "undefined") {
 const MATERIALS = [
   { id: "rhdpe", name: "Recycled HDPE", tag: "Bottle Caps", price: 0, desc: "Made from post-consumer bottle caps. Durable, lightweight, water-resistant.", co2: "82% less CO2 vs virgin plastic", icon: "♻",
     pbr: { metalness: 0.05, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 } },
-  { id: "rpet", name: "Recycled PET", tag: "Bottles", price: 8, desc: "Sourced from recycled PET drink bottles. Slightly translucent finish with a smooth feel.", co2: "75% less CO2 vs virgin plastic", icon: "♻",
+  { id: "rpet", name: "Recycled PET", tag: "Bottles", price: 49, desc: "Sourced from recycled PET drink bottles. Slightly translucent finish with a smooth feel.", co2: "75% less CO2 vs virgin plastic", icon: "♻",
     pbr: { metalness: 0.02, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.15 } },
-  { id: "biopla", name: "Bio-PLA", tag: "Plant-based", price: 15, desc: "Derived from cornstarch and sugarcane. Fully biodegradable and compostable.", co2: "68% less CO2 vs virgin plastic", icon: "☘",
+  { id: "biopla", name: "Bio-PLA", tag: "Plant-based", price: 99, desc: "Derived from cornstarch and sugarcane. Fully biodegradable and compostable.", co2: "68% less CO2 vs virgin plastic", icon: "☘",
     pbr: { metalness: 0.0, roughness: 0.42, clearcoat: 0.8, clearcoatRoughness: 0.08 } },
 ];
 
 const LENS_TYPES = [
   { id: "clear", name: "Clear", price: 0, desc: "Standard optical lens. Scratch-resistant polycarbonate.",
     tint: { color: 0xeeeeff, transmission: 0.95, opacity: 0.15 } },
-  { id: "bluelight", name: "Blue Light Filter", price: 12, desc: "Blocks 40% of blue light. Reduces eye strain from screens.",
+  { id: "bluelight", name: "Blue Light Filter", price: 199, desc: "Blocks 40% of blue light. Reduces eye strain from screens.",
     tint: { color: 0xffe8a0, transmission: 0.88, opacity: 0.2 } },
-  { id: "polarised", name: "Polarised", price: 20, desc: "Reduces glare from water and roads. UV400 protection.",
+  { id: "polarised", name: "Polarised", price: 349, desc: "Reduces glare from water and roads. UV400 protection.",
     tint: { color: 0x556655, transmission: 0.6, opacity: 0.55 } },
-  { id: "tinted", name: "Gradient Tint", price: 15, desc: "Fashion-forward gradient tint. Darker at top, clear at bottom.",
+  { id: "tinted", name: "Gradient Tint", price: 249, desc: "Fashion-forward gradient tint. Darker at top, clear at bottom.",
     tint: { color: 0x665566, transmission: 0.7, opacity: 0.45 } },
 ];
 
@@ -75,7 +75,39 @@ const LABEL_PARTS_W = ["right-lens","bridge","right-temple","right-hinge","right
    FRAMES — custom now has multiple color tints
    ═══════════════════════════════════════════════════════════ */
 const FRAMES = [
-  { id:"custom", name:"Eza Custom Design", category:"Custom", basePrice:25, tagline:"Your unique vision", labelParts:[],
+  { id:"cat-eye", name:"Cat-Eye Luxe", category:"Statement", basePrice:249, tagline:"Lead, never follow", labelParts:LABEL_PARTS,
+    dimensions:{lens:"55mm",bridge:"16mm",temple:"138mm",height:"46mm"},
+    description:"Dramatic upswept corners. Bold silhouette, hand-finished.",
+    colors:[
+      {name:"Burgundy",frame:0x6b2040,lens:0x553344,accent:0x8a3050,bg:["#14080e","#221018","#1a0c14"],particle:"#8a3050"},
+      {name:"Ivory",frame:0xd4c8b0,lens:0x998877,accent:0xe8dcc0,bg:["#18160e","#28241a","#201c14"],particle:"#e8dcc0"},
+      {name:"Emerald",frame:0x1a5c3a,lens:0x2a4a3a,accent:0x2a7a50,bg:["#081410","#102a1c","#0c2018"],particle:"#2a7a50"},
+    ], build:buildCatEye },
+  { id:"aviator", name:"Aviator Classic", category:"Sunglasses", basePrice:199, tagline:"Born to fly", labelParts:LABEL_PARTS,
+    dimensions:{lens:"58mm",bridge:"14mm",temple:"140mm",height:"50mm"},
+    description:"Teardrop silhouette with double bridge. Iconic, lightweight, everyday ready.",
+    colors:[
+      {name:"Charcoal",frame:0x3a3a3a,lens:0x556b2f,accent:0x777777,bg:["#0f1114","#1a1d23","#12141a"],particle:"#666"},
+      {name:"Sand",frame:0xc8a84e,lens:0x5a4a2a,accent:0xd4af37,bg:["#1a1508","#2a2010","#1e1a0c"],particle:"#c8a84e"},
+      {name:"Blush",frame:0xb76e79,lens:0x6b4a52,accent:0xd4a0a0,bg:["#1a1015","#2a1520","#1e1018"],particle:"#d4a0a0"},
+    ], build:buildAviator },
+  { id:"wayfarer", name:"Wayfarer Bold", category:"Everyday", basePrice:149, tagline:"Unapologetically bold", labelParts:LABEL_PARTS_W,
+    dimensions:{lens:"54mm",bridge:"18mm",temple:"145mm",height:"42mm"},
+    description:"Bold frame with slightly oversized fit. The all-rounder.",
+    colors:[
+      {name:"Matte Black",frame:0x1a1a1a,lens:0x333344,accent:0x444444,bg:["#08080a","#141418","#0c0c10"],particle:"#444"},
+      {name:"Tortoise",frame:0x8b5e3c,lens:0x5a4530,accent:0xa0724a,bg:["#1a1008","#2a1d10","#1e140c"],particle:"#a0724a"},
+      {name:"Navy",frame:0x1a2744,lens:0x334466,accent:0x3a5580,bg:["#080c14","#101828","#0c1420"],particle:"#3a5580"},
+    ], build:buildWayfarer },
+  { id:"round", name:"Round Wire", category:"Optical", basePrice:249, tagline:"Less is everything", labelParts:LABEL_PARTS,
+    dimensions:{lens:"49mm",bridge:"20mm",temple:"135mm",height:"49mm"},
+    description:"Minimalist round frame. Adjustable nose pads, all-day comfort.",
+    colors:[
+      {name:"Silver",frame:0xc0c0c0,lens:0x99bbdd,accent:0xe0e0e0,bg:["#0e1018","#181c28","#121620"],particle:"#c0c0c0"},
+      {name:"Black",frame:0x222222,lens:0x445566,accent:0x555555,bg:["#0a0a0c","#141416","#0e0e12"],particle:"#555"},
+      {name:"Copper",frame:0xb87333,lens:0x88775a,accent:0xcc8844,bg:["#1a1208","#2a1e10","#1e160c"],particle:"#cc8844"},
+    ], build:buildRound },
+  { id:"custom", name:"Eza's", category:"Custom", basePrice:449, tagline:"Your unique vision", labelParts:[],
     dimensions:{lens:"Custom",bridge:"Custom",temple:"Custom",height:"Custom"},
     description:"Your hand-uploaded 3D design. Perfectly rendered, zero-compromise.",
     url: "/models/glasses.glb",
@@ -85,38 +117,6 @@ const FRAMES = [
       {name:"Rose Gold",frame:0xc08070,lens:0x997777,accent:0xd4a0a0,bg:["#1a100e","#2a1818","#1e1214"],particle:"#d4a0a0"},
       {name:"Forest",frame:0x4a6a4a,lens:0x3a5a3a,accent:0x6a8a6a,bg:["#0a120a","#142014","#0e180e"],particle:"#6a8a6a"},
     ], build:null },
-  { id:"aviator", name:"Aviator Classic", category:"Sunglasses", basePrice:12, tagline:"Born to fly", labelParts:LABEL_PARTS,
-    dimensions:{lens:"58mm",bridge:"14mm",temple:"140mm",height:"50mm"},
-    description:"Teardrop silhouette with double bridge. Iconic, lightweight, everyday ready.",
-    colors:[
-      {name:"Charcoal",frame:0x3a3a3a,lens:0x556b2f,accent:0x777777,bg:["#0f1114","#1a1d23","#12141a"],particle:"#666"},
-      {name:"Sand",frame:0xc8a84e,lens:0x5a4a2a,accent:0xd4af37,bg:["#1a1508","#2a2010","#1e1a0c"],particle:"#c8a84e"},
-      {name:"Blush",frame:0xb76e79,lens:0x6b4a52,accent:0xd4a0a0,bg:["#1a1015","#2a1520","#1e1018"],particle:"#d4a0a0"},
-    ], build:buildAviator },
-  { id:"wayfarer", name:"Wayfarer Bold", category:"Everyday", basePrice:10, tagline:"Unapologetically bold", labelParts:LABEL_PARTS_W,
-    dimensions:{lens:"54mm",bridge:"18mm",temple:"145mm",height:"42mm"},
-    description:"Bold frame with slightly oversized fit. The all-rounder.",
-    colors:[
-      {name:"Matte Black",frame:0x1a1a1a,lens:0x333344,accent:0x444444,bg:["#08080a","#141418","#0c0c10"],particle:"#444"},
-      {name:"Tortoise",frame:0x8b5e3c,lens:0x5a4530,accent:0xa0724a,bg:["#1a1008","#2a1d10","#1e140c"],particle:"#a0724a"},
-      {name:"Navy",frame:0x1a2744,lens:0x334466,accent:0x3a5580,bg:["#080c14","#101828","#0c1420"],particle:"#3a5580"},
-    ], build:buildWayfarer },
-  { id:"round", name:"Round Wire", category:"Optical", basePrice:14, tagline:"Less is everything", labelParts:LABEL_PARTS,
-    dimensions:{lens:"49mm",bridge:"20mm",temple:"135mm",height:"49mm"},
-    description:"Minimalist round frame. Adjustable nose pads, all-day comfort.",
-    colors:[
-      {name:"Silver",frame:0xc0c0c0,lens:0x99bbdd,accent:0xe0e0e0,bg:["#0e1018","#181c28","#121620"],particle:"#c0c0c0"},
-      {name:"Black",frame:0x222222,lens:0x445566,accent:0x555555,bg:["#0a0a0c","#141416","#0e0e12"],particle:"#555"},
-      {name:"Copper",frame:0xb87333,lens:0x88775a,accent:0xcc8844,bg:["#1a1208","#2a1e10","#1e160c"],particle:"#cc8844"},
-    ], build:buildRound },
-  { id:"cat-eye", name:"Cat-Eye Luxe", category:"Statement", basePrice:14, tagline:"Lead, never follow", labelParts:LABEL_PARTS,
-    dimensions:{lens:"55mm",bridge:"16mm",temple:"138mm",height:"46mm"},
-    description:"Dramatic upswept corners. Bold silhouette, hand-finished.",
-    colors:[
-      {name:"Burgundy",frame:0x6b2040,lens:0x553344,accent:0x8a3050,bg:["#14080e","#221018","#1a0c14"],particle:"#8a3050"},
-      {name:"Ivory",frame:0xd4c8b0,lens:0x998877,accent:0xe8dcc0,bg:["#18160e","#28241a","#201c14"],particle:"#e8dcc0"},
-      {name:"Emerald",frame:0x1a5c3a,lens:0x2a4a3a,accent:0x2a7a50,bg:["#081410","#102a1c","#0c2018"],particle:"#2a7a50"},
-    ], build:buildCatEye },
 ];
 
 /* ═══════════════════════════════════════════════════════════
@@ -732,7 +732,7 @@ export default function GlassesViewer() {
               <p style={{ margin: "4px 0 0", fontSize: isSmall ? 11 : 13, opacity: 0.6 }}>{frame.name} · {material.name} · {lens.name}</p>
             </div>
             <div style={{ textAlign: "right" }}>
-              <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 28, fontWeight: 600 }}>${totalPrice}</p>
+              <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 28, fontWeight: 600 }}>₱{totalPrice.toLocaleString()}</p>
               <p style={{ margin: 0, fontSize: 10, opacity: 0.3 }}>estimated</p>
             </div>
           </div>
@@ -776,7 +776,7 @@ export default function GlassesViewer() {
                         <p style={{ margin: "0 0 4px", fontSize: 12, opacity: 0.4, lineHeight: 1.5 }}>{mt.desc}</p>
                         <p style={{ margin: 0, fontSize: 10, opacity: 0.3, color: "#6fcf97" }}>{mt.co2}</p>
                       </div>
-                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", marginLeft: 12, flexShrink: 0 }}>{mt.price === 0 ? "included" : `+$${mt.price}`}</span>
+                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", marginLeft: 12, flexShrink: 0 }}>{mt.price === 0 ? "included" : `+₱${mt.price}`}</span>
                     </div>
                   </OptCard>
                 ))}
@@ -797,7 +797,7 @@ export default function GlassesViewer() {
                           <p style={{ margin: "2px 0 0", fontSize: 12, opacity: 0.4 }}>{lt.desc}</p>
                         </div>
                       </div>
-                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", flexShrink: 0 }}>{lt.price === 0 ? "included" : `+$${lt.price}`}</span>
+                      <span style={{ fontSize: 14, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", flexShrink: 0 }}>{lt.price === 0 ? "included" : `+₱${lt.price}`}</span>
                     </div>
                   </OptCard>
                 ))}
