@@ -277,6 +277,7 @@ export default function GlassesViewer() {
   const gltfLoader = useMemo(() => new GLTFLoader(), []);
   const glbCacheRef = useRef({}); // { url: processedSceneClone }
   const swapRef = useRef(null); // Current transition interval
+  const spinRef = useRef(false);
 
   const vw = useViewportWidth();
   const isMobile = vw <= 840;
@@ -297,6 +298,7 @@ export default function GlassesViewer() {
   const [introPlayed, setIntroPlayed] = useState(false);
   const [exploded, setExploded] = useState(false);
   const [labelPositions, setLabelPositions] = useState([]);
+  const [isSpinning, setIsSpinning] = useState(false);
 
   const frame = FRAMES[frameIdx];
   const color = frame.colors[colorIdx];
@@ -604,13 +606,25 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
     canvas.addEventListener("touchend", onTouchEnd);
 
     let raf;
+    let spinT = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
       const pivot = sceneRef.current.pivot; if (!pivot) return;
       if (state.introT < 1) { state.introT += 0.012; camera.position.z = lerp(4.5, 2.8, 1 - Math.pow(1 - Math.min(state.introT, 1), 4)); }
       if (!state.isDragging) { state.velX *= 0.92; state.velY *= 0.92; state.targetRotY += state.velX; state.targetRotX += state.velY; }
-      pivot.rotation.y = lerp(pivot.rotation.y, state.targetRotY, 0.09);
-      pivot.rotation.x = lerp(pivot.rotation.x, state.targetRotX, 0.09);
+      if (spinRef.current) {
+        spinT += 0.003;
+        // Slow, stately Y rotation — one full turn ~35 seconds
+        state.targetRotY += 0.005;
+        // Lazy sinusoidal pitch nod — like the object is floating
+        state.targetRotX = Math.sin(spinT * 0.6) * 0.14;
+        state.velX = 0;
+        state.velY = 0;
+      }
+      // Buttery slow lerp when spinning, snappy when dragging
+      const lerpSpeed = spinRef.current ? 0.025 : 0.09;
+      pivot.rotation.y = lerp(pivot.rotation.y, state.targetRotY, lerpSpeed);
+      pivot.rotation.x = lerp(pivot.rotation.x, state.targetRotX, spinRef.current ? 0.02 : lerpSpeed);
       camera.position.z = lerp(camera.position.z, state.targetZ ?? 2.8, 0.06);
       camera.position.x = lerp(camera.position.x, state.mouseNX * 0.1, 0.05);
       camera.position.y = lerp(camera.position.y, 0.15 - state.mouseNY * 0.06, 0.05);
@@ -775,7 +789,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       <div className="gv-main" style={{ flex: page === "configurator" ? 1 : "0 0 0px", maxWidth: 1200, width: "100%", margin: "0 auto", padding: isSmall ? "12px 12px" : "24px 24px", display: "flex", height: page === "configurator" ? "auto" : 0, overflow: page === "configurator" ? "visible" : "hidden", visibility: page === "configurator" ? "visible" : "hidden", pointerEvents: page === "configurator" ? "auto" : "none", gap: isMobile ? 20 : 40, alignItems: "flex-start", flexWrap: "wrap", boxSizing: "border-box" }}>
         {/* 3D VIEWPORT */}
         <div className="gv-viewport-wrap" style={{ flex: "1 1 480px", minWidth: 0, position: "relative", width: "100%" }}>
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", overflow: "hidden", borderRadius: isMobile ? 14 : 20 }}>
             <div ref={mountRef} style={{ width: "100%", aspectRatio: "4 / 3", borderRadius: isMobile ? 14 : 20, overflow: "hidden", cursor: "grab", opacity: loaded ? 1 : 0, transition: "opacity 1.2s cubic-bezier(0.4,0,0.2,1)", boxShadow: "0 0 80px rgba(0,0,0,0.3)", touchAction: "none", background: "radial-gradient(ellipse at 40% 35%, rgba(28,28,52,0.95) 0%, rgba(5,5,14,1) 100%)" }} />
             {exploded && labelPositions.length > 0 && (
               <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden" }}>
@@ -819,8 +833,8 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             <button className="gv-explode" onClick={() => setExploded(!exploded)} style={{ background: exploded ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", padding: "7px 18px", borderRadius: 8, cursor: "pointer", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>
               {exploded ? "◇ Assemble" : "◈ Explode"}
             </button>
-            <button className="gv-explode" onClick={() => { const { state } = sceneRef.current; if (!state) return; state.targetRotY += Math.PI * 2.2; state.velX = 0.08; }} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", padding: "7px 18px", borderRadius: 8, cursor: "pointer", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>
-              ↻ Spin
+            <button className="gv-explode" onClick={() => { const next = !spinRef.current; spinRef.current = next; setIsSpinning(next); }} style={{ background: isSpinning ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", padding: "7px 18px", borderRadius: 8, cursor: "pointer", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>
+              ↻ {isSpinning ? "Stop" : "Spin"}
             </button>
           </div>
           <p style={{ textAlign: "center", fontSize: 10, opacity: 0.2, marginTop: 8, letterSpacing: 1 }}>
