@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import Groq from 'groq-sdk';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
@@ -83,11 +82,8 @@ const AIChatbot = () => {
     };
   }, [isOpen]);
 
-  // Initialize Groq client
-  const groq = new Groq({
-    apiKey: import.meta.env.VITE_GROQ_API_KEY || 'MISSING_API_KEY',
-    dangerouslyAllowBrowser: true // Necessary for client-side demo
-  });
+  // Cloudflare Worker URL (public — not a secret)
+  const WORKER_URL = "https://optiq.lloydthomas54321.workers.dev";
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -109,49 +105,27 @@ const AIChatbot = () => {
     setIsLoading(true);
 
     try {
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          { role: 'system', content: `
-            You are OPTI-BOT, the official AI assistant for OPTIQ, a high-end, 3D-printed eyewear brand.
-            YOUR GOAL: Help users find the perfect glasses and explain the OPTIQ process.
-
-            MISSION:
-            OPTIQ uses client-side AI face-scanning and 100% recycled plastic (HDPE bottle caps) to create custom-fit, affordable eyewear (under ₱70) for low-income communities in the Philippines and SE Asia.
-
-            TOPICS YOU MUST COVER:
-            1. Suggesting frame styles based on face shapes using Google MediaPipe technology.
-            2. Recommending designs for daily needs (students, workers, elderly, etc.).
-            3. Sustainability: Frames are made from 100% **recycled HDPE bottle caps** via partnerships with **Precious Plastics Philippines**.
-            4. Manufacturing: 3D printing in local barangays to create a micro-economy and clean up plastic waste.
-            5. Technical: Uses React, Three.js, and MediaPipe face mesh (nose, ear, and pupillary distance mapping).
-            6. Outreach: Hands-on workshops at universities in Cebu to teach AI and recycling.
-
-            BE CONCISE:
-            - Keep answers as brief as possible while being helpful. 
-            - For simple greetings like "hello", just say "Hello! How can I help you find your perfect OPTIQ frames today?" or similar. DO NOT output a long introductory paragraph unless asked.
-            - Focus only on the direct question asked.
-
-            GUARDRAILS:
-            - If a user asks something unrelated to OPTIQ, eyewear, or the manufacturing process (e.g., "What is the weather?"), politely decline and redirect the conversation back to OPTIQ.
-            - Example Refusal: "I'm here to help you with OPTIQ's 3D-printed eyewear and our unique manufacturing process. How can I assist you with your frames today?"
-            - Keep responses professional, clear, and premium in tone.
-          ` },
-          ...messages.map(m => ({ role: m.role, content: m.content })),
-          { role: 'user', content: input }
-        ],
-        model: "llama-3.3-70b-versatile",
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: messages.map(m => ({ role: m.role, content: m.content }))
+        }),
       });
 
+      if (!res.ok) throw new Error(`Worker error ${res.status}`);
+
+      const data = await res.json();
       const botMessage = {
         role: 'assistant',
-        content: chatCompletion.choices[0]?.message?.content || "I'm sorry, I couldn't process that request."
+        content: data.reply || "I'm sorry, I couldn't process that request."
       };
       setMessages((prev) => [...prev, botMessage]);
     } catch (error) {
-      console.error("Groq API Error:", error);
+      console.error("Worker/Groq Error:", error);
       setMessages((prev) => [
-        ...prev, 
-        { role: 'assistant', content: "⚠️ Configuration Error: Please ensure VITE_GROQ_API_KEY is correctly set in your .env file." }
+        ...prev,
+        { role: 'assistant', content: "⚠️ Could not reach the AI service. Please try again later." }
       ]);
     } finally {
       setIsLoading(false);
