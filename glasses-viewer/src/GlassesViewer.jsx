@@ -259,6 +259,8 @@ export default function GlassesViewer() {
   const reqIdRef = useRef(0);
   const particleCanvasRef = useRef(null);
   const gltfLoader = useMemo(() => new GLTFLoader(), []);
+  const glbCacheRef = useRef({}); // { url: processedSceneClone }
+  const swapRef = useRef(null); // Current transition interval
 
   const vw = useViewportWidth();
   const isMobile = vw <= 840;
@@ -305,77 +307,99 @@ export default function GlassesViewer() {
   useParticles(particleCanvasRef, color.particle);
 
   /* ── build glasses ── */
-  const buildGlasses = useCallback(async (fIdx, cIdx, mIdx, animate = true) => {
+  const buildGlasses = useCallback(async (fIdx, cIdx, mIdx, animate = true, justCache = false) => {
     const { scene, state } = sceneRef.current; if (!scene) return;
+    
+    // 1. Clear any active transition and update Request ID
+    if (swapRef.current) { clearInterval(swapRef.current); swapRef.current = null; }
+    const reqId = ++reqIdRef.current;
+    
+    // 2. Capture the current visible model as "oldPivot" for the fade-out
     const oldPivot = sceneRef.current.pivot;
     const f = FRAMES[fIdx], c = f.colors[cIdx], mt = MATERIALS[mIdx];
-    const reqId = ++reqIdRef.current;
 
     let model;
     if (f.url) {
       try {
-        const gltf = await new Promise((resolve, reject) => {
-          gltfLoader.load(f.url, resolve, undefined, reject);
-        });
-        if (reqId !== reqIdRef.current) return;
-        
-        model = gltf.scene;
-        model.rotation.y = -Math.PI / 2;
-        model.updateMatrixWorld(true);
+        if (glbCacheRef.current[f.url]) {
+          model = glbCacheRef.current[f.url].clone();
+        } else {
+          const gltf = await new Promise((resolve, reject) => {
+            gltfLoader.load(f.url, resolve, undefined, reject);
+          });
+          // Check if this request is still the latest
+          if (reqId !== reqIdRef.current) return;
+          
+          const loadedModel = gltf.scene;
+          loadedModel.rotation.y = -Math.PI / 2;
+          loadedModel.updateMatrixWorld(true);
 
-        let minZ = Infinity, maxZ = -Infinity;
-        model.traverse(ch => {
-          if (ch.isMesh) {
-            ch.geometry.computeBoundingBox();
-            const bbox = ch.geometry.boundingBox.clone().applyMatrix4(ch.matrixWorld);
-            minZ = Math.min(minZ, bbox.min.z);
-            maxZ = Math.max(maxZ, bbox.max.z);
-          }
-        });
-
-        const depth = maxZ - minZ;
-        const frontThreshold = maxZ - (depth * 0.1); 
-        const frontBox = new THREE.Box3();
-        model.traverse(ch => {
-          if (ch.isMesh) {
-            const pos = ch.geometry.attributes.position;
-            const mat = ch.matrixWorld;
-            for (let i = 0; i < pos.count; i++) {
-              const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(mat);
-              if (v.z >= frontThreshold) frontBox.expandByPoint(v);
+          let minZ = Infinity, maxZ = -Infinity;
+          loadedModel.traverse(ch => {
+            if (ch.isMesh) {
+              ch.geometry.computeBoundingBox();
+              const bbox = ch.geometry.boundingBox.clone().applyMatrix4(ch.matrixWorld);
+              minZ = Math.min(minZ, bbox.min.z);
+              maxZ = Math.max(maxZ, bbox.max.z);
             }
-          }
-        });
+          });
 
-        const center = frontBox.getCenter(new THREE.Vector3());
-        const sz = frontBox.getSize(new THREE.Vector3());
-        const targetWidth = 1.9;
-        const scaleFac = targetWidth / Math.max(sz.x, 0.1);
-        model.scale.setScalar(scaleFac);
-        model.position.set(-center.x * scaleFac, -center.y * scaleFac, -maxZ * scaleFac);
-
-        model.traverse(ch => {
-          if (ch.isMesh) {
-            const name = ch.name.toLowerCase();
-            if (name.includes("temple") || name.includes("arm")) {
-              const weight = ch.position.x < 0 ? -1 : 1;
-              ch.rotation.y += 0.08 * weight;
+          const depth = maxZ - minZ;
+          const frontThreshold = maxZ - (depth * 0.1); 
+          const frontBox = new THREE.Box3();
+          loadedModel.traverse(ch => {
+            if (ch.isMesh) {
+              const pos = ch.geometry.attributes.position;
+              const mat = ch.matrixWorld;
+              for (let i = 0; i < pos.count; i++) {
+                const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(mat);
+                if (v.z >= frontThreshold) frontBox.expandByPoint(v);
+              }
             }
-          }
-        });
+          });
 
-        /* ── Auto-tag all GLB meshes for color swapping ── */
-        autoTagGLBMeshes(model);
+          const center = frontBox.getCenter(new THREE.Vector3());
+          const sz = frontBox.getSize(new THREE.Vector3());
+          const targetWidth = 1.9;
+          const scaleFac = targetWidth / Math.max(sz.x, 0.1);
+          loadedModel.scale.setScalar(scaleFac);
+          loadedModel.position.set(-center.x * scaleFac, -center.y * scaleFac, -maxZ * scaleFac);
 
+          loadedModel.traverse(ch => {
+            if (ch.isMesh) {
+              const name = ch.name.toLowerCase();
+              if (name.includes("temple") || name.includes("arm")) {
+                const weight = ch.position.x < 0 ? -1 : 1;
+                ch.rotation.y += 0.08 * weight;
+              }
+            }
+          });
+
+          autoTagGLBMeshes(loadedModel);
+          glbCacheRef.current[f.url] = loadedModel;
+          model = loadedModel.clone();
+        }
+        if (justCache) return; // Exit early if we only wanted to populate the cache
       } catch (err) {
         console.error("GLB Load Error:", err);
+        if (reqId === reqIdRef.current) setTransitioning(false);
         return;
       }
     } else {
+      // Check if this request is still latest even for procedural
+      if (reqId !== reqIdRef.current) return;
       model = f.build(c, mt.pbr);
     }
 
+    // Final check before scene manipulation
+    if (reqId !== reqIdRef.current) {
+      if (model) { model.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); }); }
+      return;
+    }
+
+    const pivotsToFade = scene.children.filter(c => c.userData.isGlasses);
     const pivot = new THREE.Group();
+    pivot.userData.isGlasses = true;
     pivot.add(model);
     pivot.rotation.set(deg(8), deg(0), 0);
     if (animate) pivot.scale.setScalar(0.01);
@@ -386,30 +410,38 @@ export default function GlassesViewer() {
 
     if (state) { state.targetRotX = deg(8); state.targetRotY = deg(0); }
     if (animate) {
+      setTransitioning(true);
       let t = 0;
-      const swap = setInterval(() => {
+      swapRef.current = setInterval(() => {
         t += 0.04;
-        if (oldPivot) { 
+        pivotsToFade.forEach(oldPivot => {
           const s = Math.max(0, 1 - t * 2.5); 
           oldPivot.scale.setScalar(s); 
           oldPivot.rotation.y += 0.04; 
-          if (s <= 0) { 
+          if (s <= 0 && oldPivot.parent) { 
             scene.remove(oldPivot); 
             oldPivot.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); if (ch.material) ch.material.dispose(); }); 
           } 
-        }
+        });
         const sIn = Math.min(1, Math.max(0, (t - 0.2) * 2)); 
         const ease = 1 - Math.pow(1 - sIn, 3);
         pivot.scale.setScalar(ease);
         
         if (t >= 1) { 
-          clearInterval(swap); 
+          clearInterval(swapRef.current); 
+          swapRef.current = null;
           setTransitioning(false); 
           pivot.scale.setScalar(1);
         }
       }, 16);
     } else {
-      if (oldPivot) { scene.remove(oldPivot); oldPivot.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); if (ch.material) ch.material.dispose(); }); }
+      pivotsToFade.forEach(oldPivot => {
+        if (oldPivot.parent) { 
+          scene.remove(oldPivot); 
+          oldPivot.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); if (ch.material) ch.material.dispose(); }); 
+        }
+      });
+      setTransitioning(false);
     }
   }, [gltfLoader]);
 
@@ -578,13 +610,27 @@ export default function GlassesViewer() {
     };
   }, [buildGlasses]);
 
+  /* ── Pre-load custom GLBs on mount ── */
+  useEffect(() => {
+    FRAMES.forEach(f => {
+      if (f.url && !glbCacheRef.current[f.url]) {
+        // Trigger a background build to pre-cache the processed result
+        buildGlasses(FRAMES.indexOf(f), 0, 0, false, true);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ── reactivity ── */
   const prevFrameRef = useRef(0);
   useEffect(() => {
     if (!sceneRef.current.scene || !introPlayed) return;
     if (frameIdx !== prevFrameRef.current) {
-      if (!transitioning) { setTransitioning(true); setExploded(false); buildGlasses(frameIdx, colorIdx, matIdx, true); }
-    } else { applyMaterials(); }
+      setExploded(false);
+      buildGlasses(frameIdx, colorIdx, matIdx, true);
+    } else { 
+      applyMaterials(); 
+    }
     prevFrameRef.current = frameIdx;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameIdx, colorIdx, matIdx, lensIdx]);
@@ -870,7 +916,7 @@ export default function GlassesViewer() {
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Your custom pair</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Review your configuration before ordering.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
-                {[["Frame", frame.name, `$${frame.basePrice}`],["Material", `${material.name} (${material.tag})`, material.price === 0 ? "included" : `+$${material.price}`],["Lens", lens.name, lens.price === 0 ? "included" : `+$${lens.price}`],["Colour", color.name, "included"],["Size", `${size.name} (${size.width})`, "included"]].map(([label, value, price], i) => (
+                {[["Frame", frame.name, `₱${frame.basePrice.toLocaleString()}`],["Material", `${material.name} (${material.tag})`, material.price === 0 ? "included" : `+₱${material.price.toLocaleString()}`],["Lens", lens.name, lens.price === 0 ? "included" : `+₱${lens.price.toLocaleString()}`],["Colour", color.name, "included"],["Size", `${size.name} (${size.width})`, "included"]].map(([label, value, price], i) => (
                   <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isSmall ? "10px 12px" : "12px 16px", background: i % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)", gap: 8 }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</span>
@@ -882,11 +928,11 @@ export default function GlassesViewer() {
               </div>
               <div style={{ padding: "16px 20px", borderRadius: 12, background: "rgba(111,207,151,0.06)", border: "1px solid rgba(111,207,151,0.15)", marginBottom: 20 }}>
                 <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 600, color: "#6fcf97", letterSpacing: 1, textTransform: "uppercase" }}>Environmental Impact</p>
-                <p style={{ margin: 0, fontSize: 13, opacity: 0.6, lineHeight: 1.6 }}>Your pair uses approximately 15g of recycled plastic, diverting ~3 bottle caps from landfill. {material.co2}.</p>
+                <p style={{ margin: 0, fontSize: 13, opacity: 0.6, lineHeight: 1.6 }}>Your pair uses approximately 15g of recycled plastic, diverting ~12 bottle caps from landfill. {material.co2}.</p>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderRadius: 12, background: "rgba(255,255,255,0.06)", marginBottom: 20 }}>
                 <span style={{ fontSize: 14, fontWeight: 500 }}>Total</span>
-                <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 600 }}>${totalPrice}</span>
+                <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 600 }}>₱{totalPrice.toLocaleString()}</span>
               </div>
               <button className="gv-cta" style={{ width: "100%", padding: "18px 0", background: "rgba(255,255,255,0.92)", color: "#000", border: "none", borderRadius: 12, fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer", transition: "all 0.4s cubic-bezier(0.23,1,0.32,1)" }}>Order Custom Pair</button>
             </>)}
