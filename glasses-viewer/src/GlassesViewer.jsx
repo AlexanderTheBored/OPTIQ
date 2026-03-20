@@ -14,7 +14,7 @@ import { generateLensImages } from "./lensImages";
 import { loadStripe } from '@stripe/stripe-js';
 
 // Hardcoded for GitHub collaborators (Safe to expose public/publishable keys)
-const stripePromise = loadStripe("pk_test_51TD2emLLHEmstBQRAAphOfyi1ModHUf3mIHH1oDGWzWeX6P3CUHUN8qdI7YAPBzICi32Z8p3Kblf5JU6IR7TXlNy00pNJMv59F");
+const stripePromise = loadStripe("pk_test_51TD5Bq6Bm4yl4VWVBfDyCePfI5i9MYQbrN1TR0N9m4O4bJ6oPTBFoSmPo8lKmppyaFW8qT4Oza3lNNYCvfAZly5N00AnBMc7Im");
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const deg = (d) => (d * Math.PI) / 180;

@@ -106,7 +106,7 @@ export default function ImpactPage() {
   }, []);
 
   return (
-    <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 24px 80px", textAlign: "left" }}>
+    <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 24px 80px", textAlign: "left", boxSizing: "border-box", overflowX: "hidden" }}>
 
       {/* HERO */}
       <section style={{ paddingTop: 60, paddingBottom: 60, textAlign: "center" }}>
