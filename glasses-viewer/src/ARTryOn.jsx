@@ -142,28 +142,27 @@ function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFac
   const rIrisH = normDist(landmarks[LM.rightIris[1]], landmarks[LM.rightIris[2]]);
   const avgIrisH = (lIrisH + rIrisH) / 2;
 
-const modelWidth = 1.92;
+  const modelWidth = 1.92;
   let scale;
 
   const templeW = normDist(leftTemple, rightTemple);
-  const faceW = (templeW * 0.6 + eyeOuterW * 0.4) * vWidth;
-  const standardScale = (faceW / modelWidth) * 1.35;
+  const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
+  const standardScale = (faceW / modelWidth) * 1.6;
 
   if (calibratedFaceWidth) {
     const baseScale = (calibratedFaceWidth / 192);
-    scale = baseScale * (templeW / 0.14) * 1.1;
+    scale = baseScale * (eyeOuterW / 0.085) * 1.5;
   } else if (avgIrisH > 0.015) {
     const unitsPerMm = avgIrisH / 11.7;
-    const targetWInUnits = (138 * unitsPerMm) * vWidth;
-    const irisScale = (targetWInUnits / modelWidth) * 1.45;
-    scale = irisScale * 0.6 + standardScale * 0.4;
+    const targetWInUnits = (145 * unitsPerMm) * vWidth;
+    scale = (targetWInUnits / modelWidth) * 1.8;
   } else {
     scale = standardScale;
   }
 
-  // Clamp to sane range
-  const minScale = standardScale * 0.65;
-  const maxScale = standardScale * 1.35;
+  // Prevent extreme over/under-sizing across different face shapes
+  const minScale = standardScale * 0.7;
+  const maxScale = standardScale * 1.3;
   scale = Math.max(minScale, Math.min(maxScale, scale));
 
   let roll = 0, yaw = 0, pitch = 0;
