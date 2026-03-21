@@ -12,7 +12,7 @@ import useFrameThumbnails from "./useFrameThumbnails";
 import InfiniteMenu from "./InfiniteMenu";
 import { generateLensImages } from "./lensImages";
 import { loadStripe } from '@stripe/stripe-js';
-import { Analytics } from "@vercel/analytics/next"
+import { Analytics } from "@vercel/analytics/react"
 
 // Hardcoded for GitHub collaborators (Safe to expose public/publishable keys)
 const stripePromise = loadStripe("pk_test_51TD5Bq6Bm4yl4VWVBfDyCePfI5i9MYQbrN1TR0N9m4O4bJ6oPTBFoSmPo8lKmppyaFW8qT4Oza3lNNYCvfAZly5N00AnBMc7Im");
