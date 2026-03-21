@@ -147,15 +147,15 @@ function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFac
 
   const templeW = normDist(leftTemple, rightTemple);
   const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
-  const standardScale = (faceW / modelWidth) * 1.6;
+  const standardScale = (faceW / modelWidth) * 1.0;
 
   if (calibratedFaceWidth) {
     const baseScale = (calibratedFaceWidth / 192);
-    scale = baseScale * (eyeOuterW / 0.085) * 1.5;
+    scale = baseScale * (eyeOuterW / 0.085) * 0.95;
   } else if (avgIrisH > 0.015) {
     const unitsPerMm = avgIrisH / 11.7;
     const targetWInUnits = (145 * unitsPerMm) * vWidth;
-    scale = (targetWInUnits / modelWidth) * 1.8;
+    scale = (targetWInUnits / modelWidth) * 1.1;
   } else {
     scale = standardScale;
   }
@@ -400,7 +400,6 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
   const gltfLoader = useMemo(() => new GLTFLoader(), []);
   const reqIdRef = useRef(0);
-  const initCalledRef = useRef(false);
 
   /* ── inject CSS ── */
   useEffect(() => {
@@ -605,8 +604,6 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
       return true;
     } catch (err) {
       console.error("MediaPipe init error:", err);
-      setCameraError("Failed to load AI model. Check your internet connection or browser compatibility.");
-      setStatus("error");
       return false;
     }
   }, []);
@@ -614,16 +611,8 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   /* ── start camera ── */
   const startCamera = useCallback(async () => {
     if (streamRef.current) return true; // Already running
-    if (typeof navigator === "undefined" || !navigator.mediaDevices) {
-      setCameraError("Camera API not supported in this browser.");
-      setStatus("error");
-      return false;
-    }
-    if (!window.isSecureContext) {
-      setCameraError("AR requires a secure connection (HTTPS).");
-      setStatus("error");
-      return false;
-    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices) return false;
+    if (!window.isSecureContext) return false;
 
     try {
       const isMobile = /Mobi|Android/i.test(navigator.userAgent) || window.innerWidth <= 840;
@@ -649,18 +638,6 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
       return true;
     } catch (err) {
       console.error("Camera access failed:", err);
-      let msg = "Camera access denied. Please allow permissions and refresh.";
-      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-        msg = "Camera access denied. Click the 'lock' icon in your address bar to reset permissions.";
-      } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-        msg = "No camera found. Please connect a webcam.";
-      } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
-        msg = "Camera is being used by another application.";
-      } else if (err.name === "OverconstrainedError") {
-        msg = "Your camera doesn't support the requested resolution.";
-      }
-      setCameraError(msg);
-      setStatus("error");
       return false;
     }
   }, []);
@@ -668,6 +645,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   /* ── stop everything ── */
   const cleanup = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -682,7 +660,6 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
       try { threeContainerRef.current.removeChild(renderer.domElement); } catch (e) { /* ok */ }
     }
     sceneRef.current = {};
-    initCalledRef.current = false;
   }, []);
 
   /* ── Three.js setup ── */
@@ -836,43 +813,65 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   }, [faceWidth]);
 
   /* ══════════════════════════════════════════════════════════
-     START — runs ONCE. Uses refs for frame/color so it stays stable.
-     MediaPipe + camera + Three.js init happen here.
-     Frame/color changes are handled by a separate effect above.
+     MOUNT EFFECT — init MediaPipe + camera + Three.js once.
+     
+     Uses a local `cancelled` flag so that when React StrictMode
+     unmounts the first instance (between mount 1 and mount 2),
+     the stale async continuation from mount 1 bails out at
+     each checkpoint instead of racing with mount 2.
+     
+     Frame/color changes are handled by the separate effect above.
      ══════════════════════════════════════════════════════════ */
-  const handleStart = useCallback(async () => {
-    if (initCalledRef.current) return;
-    initCalledRef.current = true;
+  useEffect(() => {
+    let cancelled = false;
 
-    setStatus("loading");
-    setCapturedImage(null);
-    setCameraError(null);
+    (async () => {
+      setStatus("loading");
+      setCapturedImage(null);
+      setCameraError(null);
 
-    const okModel = await initFaceLandmarker();
-    const okCamera = await startCamera();
-    if (!okModel || !okCamera || !videoRef.current) {
-      initCalledRef.current = false;
-      return;
-    }
+      const okModel = await initFaceLandmarker();
+      if (cancelled) return;
 
-    const container = threeContainerRef.current;
-    const displayW = container?.clientWidth || videoRef.current.videoWidth || 640;
-    const displayH = container?.clientHeight || videoRef.current.videoHeight || 480;
+      if (!okModel) {
+        setCameraError("Failed to load AI model. Check your internet connection or browser compatibility.");
+        setStatus("error");
+        return;
+      }
 
-    initThreeJS(displayW, displayH);
-    // Use refs so this callback doesn't depend on frameIdx/colorIdx state
-    buildGlasses(frameIdxRef.current, colorIdxRef.current);
-    prevFrameIdxRef.current = frameIdxRef.current;
-    startLoop();
-    setStatus("live");
-  }, [initFaceLandmarker, startCamera, initThreeJS, buildGlasses, startLoop]);
+      const okCamera = await startCamera();
+      if (cancelled) return;
 
-  /* ── Mount: start once, cleanup on unmount ── */
-    useEffect(() => {
-    handleStart();
-    return cleanup;
-  }, [handleStart, cleanup]);
-  
+      if (!okCamera || !videoRef.current) {
+        if (!window.isSecureContext) {
+          setCameraError("AR requires a secure connection (HTTPS).");
+        } else {
+          setCameraError("Camera access denied. Please allow permissions and refresh.");
+        }
+        setStatus("error");
+        return;
+      }
+
+      if (cancelled) return;
+
+      const container = threeContainerRef.current;
+      const displayW = container?.clientWidth || videoRef.current.videoWidth || 640;
+      const displayH = container?.clientHeight || videoRef.current.videoHeight || 480;
+
+      initThreeJS(displayW, displayH);
+      buildGlasses(frameIdxRef.current, colorIdxRef.current);
+      prevFrameIdxRef.current = frameIdxRef.current;
+      startLoop();
+
+      if (!cancelled) setStatus("live");
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [initFaceLandmarker, startCamera, initThreeJS, buildGlasses, startLoop, cleanup]);
+
   /* ── capture photo ── */
   const handleCapture = useCallback(() => {
     const vCanvas = videoCanvasRef.current;
@@ -930,7 +929,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   }, []);
 
   /* ═══════════════════════════════════════════════════════════
-     RENDER — improved UI
+     RENDER
      ═══════════════════════════════════════════════════════════ */
   return (
     <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
@@ -997,7 +996,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
         {status === "error" && (
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 32 }}>
             <p style={{ fontSize: 14, opacity: 0.6, textAlign: "center", color: "#ff6b6b" }}>{cameraError}</p>
-            <button onClick={() => { initCalledRef.current = false; handleStart(); }} style={{
+            <button onClick={() => window.location.reload()} style={{
               padding: "10px 24px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer",
               background: "rgba(255,255,255,0.06)", color: "#fff", fontFamily: "'DM Sans', sans-serif", fontSize: 12,
               fontWeight: 500, letterSpacing: 1, textTransform: "uppercase",
