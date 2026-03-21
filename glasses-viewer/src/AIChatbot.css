@@ -206,4 +206,12 @@
     right: -1rem;
     bottom: 70px;
   }
+  
+  body.ar-mode .ai-chatbot-container {
+    bottom: 140px;
+  }
+  
+  body.ar-mode .chat-window {
+    bottom: 210px;
+  }
 }
