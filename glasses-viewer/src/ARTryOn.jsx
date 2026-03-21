@@ -1116,9 +1116,9 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
               Frame Style
             </p>
             <div style={{
-              display: "flex", gap: 6, overflowX: "auto", padding: "4px 0 8px",
+              display: "flex", gap: 6, overflowX: "auto", padding: "4px 16px 8px",
               scrollbarWidth: "none", WebkitOverflowScrolling: "touch",
-              justifyContent: AR_FRAMES.length <= 5 ? "center" : "flex-start",
+              justifyContent: "flex-start",
             }}>
               {AR_FRAMES.map((f, i) => {
                 const isSelected = frameIdx === i;
