@@ -405,9 +405,11 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
   /* ── inject CSS ── */
   useEffect(() => {
+    document.body.classList.add("ar-mode");
+
     const id = "ar-tryon-styles";
-    if (document.getElementById(id)) return;
-    const s = document.createElement("style");
+    if (!document.getElementById(id)) {
+      const s = document.createElement("style");
     s.id = id;
     s.textContent = `
       @keyframes arPulse { 0%,100% { opacity:0.4 } 50% { opacity:1 } }
@@ -423,7 +425,12 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
       .ar-back-btn { transition: all 0.3s !important; }
       .ar-back-btn:hover { background: rgba(255,255,255,0.12) !important; }
     `;
-    document.head.appendChild(s);
+      document.head.appendChild(s);
+    }
+
+    return () => {
+      document.body.classList.remove("ar-mode");
+    };
   }, []);
 
   /* ── build / rebuild glasses model ── */
