@@ -8,27 +8,30 @@ Live dev server: `npm run dev` then open `http://localhost:5173`
 
 ## What's Built
 
-### Configurator (6-step flow)
-- **Frame** — 5 styles (Cat-Eye Luxe, Aviator Classic, Wayfarer Bold, Round Wire, Eza's Custom) selectable via an animated FlowingMenu with marquee hover previews and offscreen-rendered thumbnails
+### Configurator (7-step flow)
+- **Fit Scan** — AI face measurement as the entry point; recommends frame style and size before the user starts customizing, with a skip option for manual selection
+- **Frame** — 5 styles (Cat-Eye Luxe, Aviator Classic, Wayfarer Bold, Round Wire, Eza's Custom) selectable via an animated FlowingMenu with marquee hover previews and offscreen-rendered thumbnails; pre-selected if the user completed a face scan
 - **Material** — 3 recycled material options (HDPE bottle caps, PET bottles, Bio-PLA) with PBR properties per material
 - **Lens** — 5 lens types (Clear, Blue Light Filter, Polarised, Gradient Tint, Photochromic) with a 3D lens picker that shows each lens as a physical disc you can click through
 - **Colour** — per-frame colour variants with an editorial expand-on-select ColorPicker, material sheen sweep animation, and an accent swatch strip
-- **Size** — Small / Medium / Large with live 3D model scaling (94% / 100% / 106%) and an offscreen-rendered silhouette diagram that shows the exact frame shape with accurate dimensions
-- **Summary** — full build review with line-item pricing, environmental impact callout, and order CTA
+- **Size** — Small / Medium / Large with live 3D model scaling (94% / 100% / 106%) and an offscreen-rendered silhouette diagram that shows the exact frame shape with accurate dimensions; auto-filled if the user completed a face scan
+- **Summary** — compact build review with 3-column receipt layout, environmental impact callout, AR try-on CTA with shimmer animation, and Stripe checkout
 
 ### 3D Viewer
 - Procedurally generated frames via `buildAviator`, `buildWayfarer`, `buildRound`, `buildCatEye` using Three.js geometry primitives
 - GLB model support for custom frames (`/public/models/glasses.glb`) with auto-tagging, front-face anchor detection, and GLB color tinting
 - GLB cache (`glbCacheRef`) so models only load once per session
+- `skipAnimRef` suppresses the frame swap animation when returning from the AI scanner (instant model switch instead of spin-out/scale-in)
 - Cinematic intro zoom on first load
 - Animated frame transitions (old model spins + scales out, new scales in)
 - Drag to rotate, scroll/pinch to zoom, mouse parallax on camera
 - Smooth auto-spin mode with sinusoidal pitch nod
 - Exploded view with `EXPLODE_DIR` per part, SVG leader lines, part name + spec labels that track 3D world positions in real time
-- Cinematic camera angles per step (`STEP_ANGLES`) — each step has a curated x/y rotation and z distance
+- Cinematic camera angles per step (`STEP_ANGLES`) — each of the 7 steps has a curated x/y rotation and z distance
 - Particle canvas overlay that colour-matches the active frame variant
 
 ### AR Try-On
+- Integrated into the configurator flow at the Summary step (pre-checkout), also accessible via the nav tab
 - MediaPipe Face Landmarker (468-point mesh, VIDEO mode)
 - One Euro Filters for position, scale, roll, yaw, pitch — aggressive smoothing when still, responsive during fast movement
 - 3D coordinate frame constructed from landmark z-coordinates drives rotation (replaces unreliable `outputFacialTransformationMatrixes`)
@@ -38,8 +41,10 @@ Live dev server: `npm run dev` then open `http://localhost:5173`
 - `pivot` wrapper animated during frame swaps to prevent GLB drift
 - Photo capture compositing (video canvas + WebGL canvas) with OPTIQ watermark
 - Responsive: GPU delegate on desktop, CPU on mobile
+- Back button returns to Summary step for seamless checkout continuation
 
 ### AI Fit Scanner
+- First step in the configurator flow (Step 0), also accessible via the nav tab
 - MediaPipe Face Landmarker in VIDEO mode
 - Iris auto-calibration using average iris diameter (11.7mm reference) for mm-per-unit conversion
 - Manual IPD override for higher accuracy
@@ -47,9 +52,17 @@ Live dev server: `npm run dev` then open `http://localhost:5173`
 - Averages 20 landmark samples for stability
 - Outputs face width, bridge width, face height, cheek width, face shape (round/square/oval/oblong), W/H ratio
 - Recommends frame style and size, passes result back to configurator (`onApplyFit`)
+- Smart return navigation: returns to Frame step (Step 1) with recommended frame pre-selected when triggered from the configurator, or to a custom return step when triggered from elsewhere
+
+### Checkout
+- Stripe integration via Cloudflare Worker proxy (`/create-checkout-session` endpoint)
+- Sends frame name, material, lens type, and total price
+- Collects Philippine shipping address
+- Success/cancel URL redirects back to the configurator
+- Stripe publishable key is safe to expose client-side; secret key lives in Cloudflare Workers secrets
 
 ### Other Pages
-- **Our Impact** — framer-motion scroll animations, CountUp stats, cost comparison table, process timeline, community impact cards
+- **Our Impact** — framer-motion scroll animations, CountUp stats, cost comparison table (traditional vs OPTIQ), process timeline, community impact cards
 - **AI Chatbot (OPTI-BOT)** — floating chat widget backed by a Cloudflare Worker proxy to Groq (Llama 3.3 70B), 3D procedural glasses icon in the toggle button
 
 ---
@@ -62,9 +75,10 @@ Live dev server: `npm run dev` then open `http://localhost:5173`
 | 3D rendering | Three.js 0.183 (vanilla, no R3F) |
 | Face tracking | MediaPipe Tasks Vision 0.10 |
 | Animations | Framer Motion 12, GSAP 3 |
-| AI chatbot | Groq API via Cloudflare Worker |
+| AI chatbot | Groq API (Llama 3.3 70B) via Cloudflare Worker |
+| Payments | Stripe Checkout via Cloudflare Worker |
 | Fonts | Playfair Display, DM Sans, JetBrains Mono |
-| Deployment | Vercel |
+| Deployment | Vercel (frontend), Cloudflare Workers (API proxy) |
 
 ---
 
@@ -80,7 +94,7 @@ glasses-viewer/
   src/
     App.jsx                ← root, renders GlassesViewer + AIChatbot
     main.jsx               ← Vite entry point
-    GlassesViewer.jsx      ← configurator, 3D scene, routing between pages
+    GlassesViewer.jsx      ← 7-step configurator, 3D scene, page routing
     ARTryOn.jsx            ← AR virtual try-on
     FitScanner.jsx         ← AI face measurement tool
     ImpactPage.jsx         ← sustainability/mission page
@@ -96,16 +110,20 @@ glasses-viewer/
     FlowingMenu.css
     InfiniteMenu.css
   cloudflare-worker/
-    worker.js              ← Groq API proxy (deploy to Cloudflare Workers)
+    worker.js              ← Groq API + Stripe Checkout proxy
 ```
 
 ---
 
 ## Key Architectural Decisions
 
+**AI face scan as the entry point.** The configurator opens with a face scan step that recommends frame style and size before the user touches anything. This makes the AI the core of the experience rather than an optional sidebar feature. Users can skip to manual selection if they prefer.
+
 **Procedural geometry over file assets for built-in frames.** No .glb files needed for the four built-in styles. Geometry is built from Three.js primitives in `buildAviator` / `buildWayfarer` / `buildRound` / `buildCatEye`. Keeps the bundle light, iteration fast, and colour/material swapping trivial since we own every mesh.
 
 **GLB support layered on top.** The custom "Eza's" frame loads a real .glb from `/public/models/`. `autoTagGLBMeshes` classifies each mesh by name and material properties, stores original colors for tinting, and makes it compatible with the same colour-swap and explode systems as procedural frames.
+
+**`skipAnimRef` for scanner returns.** When the AI scanner recommends a frame and passes it back to the configurator, `skipAnimRef` suppresses the spin-out/scale-in animation so the recommended frame appears instantly. Without this, the default frame visibly swaps to the recommended one.
 
 **Never `display: none` on a Three.js container.** Use `height: 0` + `overflow: hidden` + `visibility: hidden` to keep the mount div in the DOM with real dimensions. WebGL loses its sizing context if the container has zero dimensions.
 
@@ -119,6 +137,8 @@ glasses-viewer/
 
 **Silhouette diagram via offscreen WebGL render.** The size step diagram is generated by rendering the actual frame geometry through an orthographic camera with `MeshBasicMaterial({ color: white })`, captured as a PNG data URL. This means the diagram is always pixel-accurate with the 3D model — no manual SVG path maintenance required.
 
+**AR try-on placed before checkout, not in a separate tab.** The Summary step includes a prominent AR try-on card so users see how the glasses look on their face right before paying. The AR page and scanner are still independently accessible via the nav for users who want to skip the full flow.
+
 ---
 
 ## Running Locally
@@ -131,8 +151,8 @@ npm run dev
 
 Opens at `http://localhost:5173`.
 
-### Chatbot Worker (optional)
-The chatbot proxies through a Cloudflare Worker to keep the Groq API key server-side. To run it locally:
+### Chatbot + Stripe Worker (optional)
+The chatbot and Stripe checkout both proxy through a single Cloudflare Worker to keep API keys server-side. To run it locally:
 1. Install Wrangler: `npm install -g wrangler`
 2. `cd cloudflare-worker && wrangler dev`
 3. Update `WORKER_URL` in `AIChatbot.jsx` to `http://localhost:8787`
@@ -141,7 +161,7 @@ The chatbot proxies through a Cloudflare Worker to keep the Groq API key server-
 
 ## Deploying
 
-The app deploys automatically to Vercel on push. The Cloudflare Worker is deployed separately via `wrangler deploy` from the `cloudflare-worker/` directory with the `GROQ_API_KEY` secret set in the Cloudflare dashboard.
+The app deploys automatically to Vercel on push. The Cloudflare Worker is deployed separately via `wrangler deploy` from the `cloudflare-worker/` directory with `GROQ_API_KEY` and `STRIPE_SECRET_KEY` secrets set in the Cloudflare dashboard.
 
 ---
 
@@ -159,13 +179,14 @@ For production, host .glb files on a CDN (Cloudflare R2 or Vercel Blob) and poin
 
 ## Environment Variables
 
-None required for the core app. The Groq API key lives in Cloudflare Workers secrets, not in the frontend.
+None required for the core app. API keys live in Cloudflare Workers secrets:
+- `GROQ_API_KEY` — for the OPTI-BOT chatbot
+- `STRIPE_SECRET_KEY` — for checkout session creation
 
 ---
 
 ## What's Next
 
-- **Stripe integration** — payment flow for the "Order Custom Pair" CTA
 - Lens scanning (AI computer vision + reference-object scale calibration to extract prescription dimensions from a photo)
 - Side-by-side frame compare mode
 - Saved builds / wishlist
