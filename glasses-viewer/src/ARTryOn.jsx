@@ -147,15 +147,15 @@ function extractFacePose(landmarks, vWidth, vHeight, facialMatrix, calibratedFac
 
   const templeW = normDist(leftTemple, rightTemple);
   const faceW = (templeW * 0.4 + eyeOuterW * 0.6) * vWidth;
-  const standardScale = (faceW / modelWidth) * 1.0;
+  const standardScale = (faceW / modelWidth) * 1.6;
 
   if (calibratedFaceWidth) {
     const baseScale = (calibratedFaceWidth / 192);
-    scale = baseScale * (eyeOuterW / 0.085) * 0.95;
+    scale = baseScale * (eyeOuterW / 0.085) * 1.5;
   } else if (avgIrisH > 0.015) {
     const unitsPerMm = avgIrisH / 11.7;
     const targetWInUnits = (145 * unitsPerMm) * vWidth;
-    scale = (targetWInUnits / modelWidth) * 1.1;
+    scale = (targetWInUnits / modelWidth) * 1.8;
   } else {
     scale = standardScale;
   }
@@ -364,6 +364,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   const faceLandmarkerRef = useRef(null);
   const streamRef = useRef(null);
   const rafRef = useRef(null);
+  const initCalledRef = useRef(false);
 
   const glassesOpacityRef = useRef(0);
   const targetOpacityRef = useRef(0);
@@ -382,7 +383,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     return idx < maxColors ? idx : 0;
   }, [initialColorIdx, resolvedInitialFrameIdx]);
 
-  const [status, setStatus] = useState("idle");
+  const [status, setStatus] = useState("loading"); // Start as loading
   const [frameIdx, setFrameIdx] = useState(resolvedInitialFrameIdx);
   const [colorIdx, setColorIdx] = useState(resolvedInitialColorIdx);
   const [faceDetected, setFaceDetected] = useState(false);
@@ -525,6 +526,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
     glassesParent.add(pivot);
     sceneRef.current.glasses = pivot;
+    glassesOpacityRef.current = 0; // Reset opacity after new build
   }, [gltfLoader]);
 
   /* ── Update colors without rebuilding geometry ── */
@@ -566,16 +568,14 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     });
   }, []);
 
-  /* ── Effect: rebuild or repaint when frame/color changes (NOT on init) ── */
+  /* ── Effect: update model when frame/color changes ── */
   useEffect(() => {
-    if (!sceneRef.current.scene || !sceneRef.current.glassesParent) return;
-    // Skip if we haven't finished initial setup yet
     if (status !== "live" && status !== "captured") return;
+    if (!sceneRef.current.scene || !sceneRef.current.glassesParent) return;
 
     if (prevFrameIdxRef.current !== frameIdx) {
       buildGlasses(frameIdx, colorIdx);
       filterBankRef.current.reset();
-      glassesOpacityRef.current = 0;
       prevFrameIdxRef.current = frameIdx;
     } else {
       updateGlassesColor(frameIdx, colorIdx);
@@ -584,7 +584,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
   /* ── initialize MediaPipe (only once, cached in ref) ── */
   const initFaceLandmarker = useCallback(async () => {
-    if (faceLandmarkerRef.current) return true; // Already initialized
+    if (faceLandmarkerRef.current) return true;
     try {
       const isMobile = window.matchMedia("(max-width: 840px)").matches || /Mobi|Android/i.test(navigator.userAgent);
       const vision = await FilesetResolver.forVisionTasks(
@@ -610,42 +610,40 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
   /* ── start camera ── */
   const startCamera = useCallback(async () => {
-    if (streamRef.current) return true; // Already running
-    if (typeof navigator === "undefined" || !navigator.mediaDevices) return false;
-    if (!window.isSecureContext) return false;
-
-    try {
-      const isMobile = /Mobi|Android/i.test(navigator.userAgent) || window.innerWidth <= 840;
-      const constraints = {
-        video: isMobile 
-          ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
-          : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } }
-      };
-
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (e) {
-        console.warn("Camera: Preferred constraints failed, trying default...", e.name);
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      }
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        try { await videoRef.current.play(); } catch (playErr) { console.error("Camera play error:", playErr); }
-      }
-      return true;
-    } catch (err) {
-      console.error("Camera access failed:", err);
-      return false;
+    if (streamRef.current) return true;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+      throw new Error("Camera API not supported in this browser.");
     }
+    if (!window.isSecureContext) {
+      throw new Error("AR requires a secure connection (HTTPS).");
+    }
+
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent) || window.innerWidth <= 840;
+    const constraints = {
+      video: isMobile 
+        ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
+        : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } }
+    };
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      console.warn("Camera: Preferred constraints failed, trying default...", e.name);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    }
+
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      try { await videoRef.current.play(); } catch (playErr) { console.error("Camera play error:", playErr); }
+    }
+    return true;
   }, []);
 
   /* ── stop everything ── */
   const cleanup = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -660,6 +658,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
       try { threeContainerRef.current.removeChild(renderer.domElement); } catch (e) { /* ok */ }
     }
     sceneRef.current = {};
+    initCalledRef.current = false;
   }, []);
 
   /* ── Three.js setup ── */
@@ -813,65 +812,67 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   }, [faceWidth]);
 
   /* ══════════════════════════════════════════════════════════
-     MOUNT EFFECT — init MediaPipe + camera + Three.js once.
-     
-     Uses a local `cancelled` flag so that when React StrictMode
-     unmounts the first instance (between mount 1 and mount 2),
-     the stale async continuation from mount 1 bails out at
-     each checkpoint instead of racing with mount 2.
-     
-     Frame/color changes are handled by the separate effect above.
+     START — runs ONCE to init Engine/Camera
      ══════════════════════════════════════════════════════════ */
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
 
-    (async () => {
-      setStatus("loading");
-      setCapturedImage(null);
-      setCameraError(null);
+    async function setup() {
+      if (initCalledRef.current) return;
+      initCalledRef.current = true;
 
-      const okModel = await initFaceLandmarker();
-      if (cancelled) return;
-
-      if (!okModel) {
-        setCameraError("Failed to load AI model. Check your internet connection or browser compatibility.");
-        setStatus("error");
-        return;
-      }
-
-      const okCamera = await startCamera();
-      if (cancelled) return;
-
-      if (!okCamera || !videoRef.current) {
-        if (!window.isSecureContext) {
-          setCameraError("AR requires a secure connection (HTTPS).");
-        } else {
-          setCameraError("Camera access denied. Please allow permissions and refresh.");
+      try {
+        setStatus("loading");
+        
+        const okModel = await initFaceLandmarker();
+        if (!active || !okModel) {
+          throw new Error("Failed to load AI model.");
         }
-        setStatus("error");
-        return;
+
+        const okCam = await startCamera();
+        if (!active || !okCam) return;
+
+        // Ensure video is ready before measuring dimensions for Three.js
+        const video = videoRef.current;
+        if (video && video.readyState < 2) {
+          await new Promise((resolve) => {
+            video.onloadedmetadata = () => resolve();
+          });
+        }
+        if (!active) return;
+
+        const container = threeContainerRef.current;
+        if (!container) return;
+        
+        const displayW = container.clientWidth || video.videoWidth || 640;
+        const displayH = container.clientHeight || video.videoHeight || 480;
+
+        initThreeJS(displayW, displayH);
+        await buildGlasses(frameIdxRef.current, colorIdxRef.current);
+        prevFrameIdxRef.current = frameIdxRef.current;
+
+        if (active) {
+          setStatus("live");
+          startLoop();
+        }
+      } catch (err) {
+        console.error("Setup failed:", err);
+        if (active) {
+          setCameraError(err.message || "Camera access denied or device not found.");
+          setStatus("error");
+        }
       }
+    }
 
-      if (cancelled) return;
-
-      const container = threeContainerRef.current;
-      const displayW = container?.clientWidth || videoRef.current.videoWidth || 640;
-      const displayH = container?.clientHeight || videoRef.current.videoHeight || 480;
-
-      initThreeJS(displayW, displayH);
-      buildGlasses(frameIdxRef.current, colorIdxRef.current);
-      prevFrameIdxRef.current = frameIdxRef.current;
-      startLoop();
-
-      if (!cancelled) setStatus("live");
-    })();
+    setup();
 
     return () => {
-      cancelled = true;
+      active = false;
       cleanup();
     };
-  }, [initFaceLandmarker, startCamera, initThreeJS, buildGlasses, startLoop, cleanup]);
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array ensures this runs exactly once on mount
+  
   /* ── capture photo ── */
   const handleCapture = useCallback(() => {
     const vCanvas = videoCanvasRef.current;
@@ -929,7 +930,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   }, []);
 
   /* ═══════════════════════════════════════════════════════════
-     RENDER
+     RENDER — improved UI
      ═══════════════════════════════════════════════════════════ */
   return (
     <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
@@ -987,7 +988,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
             {status === "loading" && (
               <>
                 <div style={{ width: 36, height: 36, border: "2px solid rgba(111,207,151,0.3)", borderTopColor: "#6fcf97", borderRadius: "50%", animation: "gvSpin 0.8s linear infinite" }} />
-                <p style={{ fontSize: 13, opacity: 0.5 }}>Loading face tracking...</p>
+                <p style={{ fontSize: 13, opacity: 0.5 }}>Loading AR & Camera...</p>
               </>
             )}
           </div>
