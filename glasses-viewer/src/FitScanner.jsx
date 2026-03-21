@@ -499,7 +499,7 @@ export default function FitScanner({ onApplyFit }) {
   }, [status]);
 
   return (
-    <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 24px 80px", textAlign: "left" }}>
+    <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 24px 80px", textAlign: "left", boxSizing: "border-box" }}>
 
       {/* HEADER */}
       <section style={{ paddingTop: 48, paddingBottom: 32, textAlign: "center" }}>
