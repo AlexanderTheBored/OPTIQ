@@ -22,12 +22,13 @@ const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
 
 // Each step: { x, y, z } — z is camera distance
 const STEP_ANGLES = [
-  { x: deg(8),   y: deg(25),  z: 2.85 }, // 0 Frame    — classic 3/4, temples visible
-  { x: deg(12),  y: deg(-18), z: 3.0  }, // 1 Material — slight top-left, rim texture catches light
-  { x: deg(0),   y: deg(4),   z: 2.55 }, // 2 Lens     — nearly face-on, lens occupies frame
-  { x: deg(6),   y: deg(-38), z: 2.75 }, // 3 Colour   — wide swing right, side profile, pigment shows
-  { x: deg(-8),  y: deg(18),  z: 3.1  }, // 4 Size     — low angle, full silhouette readable
-  { x: deg(10),  y: deg(10),  z: 2.45 }, // 5 Summary  — tight close hero, symmetrical and confident
+  { x: deg(5),   y: deg(15),  z: 3.2  }, // 0 Fit Scan — wide establishing shot
+  { x: deg(8),   y: deg(25),  z: 2.85 }, // 1 Frame    — classic 3/4, temples visible
+  { x: deg(12),  y: deg(-18), z: 3.0  }, // 2 Material — slight top-left, rim texture catches light
+  { x: deg(0),   y: deg(4),   z: 2.55 }, // 3 Lens     — nearly face-on, lens occupies frame
+  { x: deg(6),   y: deg(-38), z: 2.75 }, // 4 Colour   — wide swing right, side profile, pigment shows
+  { x: deg(-8),  y: deg(18),  z: 3.1  }, // 5 Size     — low angle, full silhouette readable
+  { x: deg(10),  y: deg(10),  z: 2.45 }, // 6 Summary  — tight close hero, symmetrical and confident
 ];
 
 if (typeof document !== "undefined") {
@@ -192,8 +193,6 @@ function buildCatEye(color,matPbr){
 
 /* ═══════════════════════════════════════════════════════════
    GLB MESH AUTO-TAGGER
-   Classifies GLB meshes by inspecting material properties
-   and mesh names, then stores original colors for tinting.
    ═══════════════════════════════════════════════════════════ */
 function autoTagGLBMeshes(model) {
   model.traverse(ch => {
@@ -246,7 +245,7 @@ function useParticles(ref,c){const cr=useRef(c);cr.current=c;useEffect(()=>{cons
 
 const SIZE_SCALES = [0.940, 1.0, 1.060]; // Small=126mm / Medium=134mm / Large=142mm
 
-const STEPS = ["Frame","Material","Lens","Colour","Size","Summary"];
+const STEPS = ["Fit Scan","Frame","Material","Lens","Colour","Size","Summary"];
 
 function OptCard({ selected, onClick, children, style = {} }) {
   return (
@@ -285,6 +284,7 @@ export default function GlassesViewer() {
   const swapRef = useRef(null); // Current transition interval
   const spinRef = useRef(false);
   const sizeScaleRef = useRef(1.0);
+  const skipAnimRef = useRef(false);
 
   const vw = useViewportWidth();
   const isMobile = vw <= 840;
@@ -298,6 +298,7 @@ export default function GlassesViewer() {
   const [sizeIdx, setSizeIdx] = useState(1);
   const [calibratedFaceWidth, setCalibratedFaceWidth] = useState(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [scanReturnStep, setScanReturnStep] = useState(null);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState("configurator");
@@ -374,11 +375,9 @@ export default function GlassesViewer() {
   const buildGlasses = useCallback(async (fIdx, cIdx, mIdx, animate = true, justCache = false) => {
     const { scene, state } = sceneRef.current; if (!scene) return;
     
-    // 1. Clear any active transition and update Request ID
     if (swapRef.current) { clearInterval(swapRef.current); swapRef.current = null; }
     const reqId = ++reqIdRef.current;
     
-    // 2. Capture the current visible model as "oldPivot" for the fade-out
     const oldPivot = sceneRef.current.pivot;
     const f = FRAMES[fIdx], c = f.colors[cIdx], mt = MATERIALS[mIdx];
 
@@ -391,7 +390,6 @@ export default function GlassesViewer() {
           const gltf = await new Promise((resolve, reject) => {
             gltfLoader.load(f.url, resolve, undefined, reject);
           });
-          // Check if this request is still the latest
           if (reqId !== reqIdRef.current) return;
           
           const loadedModel = gltf.scene;
@@ -443,19 +441,17 @@ export default function GlassesViewer() {
           glbCacheRef.current[f.url] = loadedModel;
           model = loadedModel.clone();
         }
-        if (justCache) return; // Exit early if we only wanted to populate the cache
+        if (justCache) return;
       } catch (err) {
         console.error("GLB Load Error:", err);
         if (reqId === reqIdRef.current) setTransitioning(false);
         return;
       }
     } else {
-      // Check if this request is still latest even for procedural
       if (reqId !== reqIdRef.current) return;
       model = f.build(c, mt.pbr);
     }
 
-    // Final check before scene manipulation
     if (reqId !== reqIdRef.current) {
       if (model) { model.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); }); }
       return;
@@ -529,24 +525,19 @@ export default function GlassesViewer() {
 
         if (name.includes("lens")) {
           if (isGLB && orig) {
-            // GLB lens: tint relative to original. 0xffffff = restore original.
             if (c.lens === 0xffffff) { mat.color.copy(orig); }
             else { mat.color.copy(orig).multiply(new THREE.Color(c.lens)); }
           } else {
-            // Procedural lens: use lens type tint directly
             mat.color.setHex(lt.tint.color);
             mat.transmission = lt.tint.transmission;
             mat.opacity = lt.tint.opacity;
           }
         } else if (!isGLB && mat.metalness > 0.8) {
-          // Procedural accent parts (hinges, pads)
           mat.color.setHex(c.accent);
         } else if (isGLB && orig) {
-          // GLB frame parts: tint relative to original color
           if (c.frame === 0xffffff) { mat.color.copy(orig); }
           else { mat.color.copy(orig).multiply(new THREE.Color(c.frame)); }
         } else {
-          // Procedural frame parts
           mat.color.setHex(c.frame);
           mat.metalness = mt.pbr.metalness;
           mat.roughness = mt.pbr.roughness;
@@ -562,7 +553,6 @@ export default function GlassesViewer() {
     const glasses = sceneRef.current.glasses;
     if (!glasses) return;
     const { state } = sceneRef.current;
-    // Drive camera z through state.targetZ so animate loop handles it smoothly
     if (state) state.targetZ = exploded ? 4.2 : (STEP_ANGLES[step]?.z ?? 2.8);
     let t = 0;
     const id = setInterval(() => {
@@ -621,7 +611,7 @@ export default function GlassesViewer() {
     scene.add(new THREE.DirectionalLight(0xffffff, 0.9).translateY(3).translateZ(-4));
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.ShadowMaterial({ opacity: 0.12 }));
     ground.rotation.x = -Math.PI / 2; ground.position.y = -0.55; ground.receiveShadow = true; scene.add(ground);
-const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetRotX: deg(8), targetRotY: deg(0), targetZ: 2.8, mouseNX: 0, mouseNY: 0, introT: 0 };
+    const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetRotX: deg(8), targetRotY: deg(0), targetZ: 2.8, mouseNX: 0, mouseNY: 0, introT: 0 };
     sceneRef.current = { renderer, scene, camera, state, mount };
     buildGlasses(0, 0, 0, false);
     setTimeout(() => { setLoaded(true); setIntroPlayed(true); }, 100);
@@ -651,14 +641,11 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       if (!state.isDragging) { state.velX *= 0.92; state.velY *= 0.92; state.targetRotY += state.velX; state.targetRotX += state.velY; }
       if (spinRef.current) {
         spinT += 0.003;
-        // Slow, stately Y rotation — one full turn ~35 seconds
         state.targetRotY += 0.005;
-        // Lazy sinusoidal pitch nod — like the object is floating
         state.targetRotX = Math.sin(spinT * 0.6) * 0.14;
         state.velX = 0;
         state.velY = 0;
       }
-      // Buttery slow lerp when spinning, snappy when dragging
       const lerpSpeed = spinRef.current ? 0.025 : 0.09;
       pivot.rotation.y = lerp(pivot.rotation.y, state.targetRotY, lerpSpeed);
       pivot.rotation.x = lerp(pivot.rotation.x, state.targetRotX, spinRef.current ? 0.02 : lerpSpeed);
@@ -690,7 +677,6 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
   useEffect(() => {
     FRAMES.forEach(f => {
       if (f.url && !glbCacheRef.current[f.url]) {
-        // Trigger a background build to pre-cache the processed result
         buildGlasses(FRAMES.indexOf(f), 0, 0, false, true);
       }
     });
@@ -703,7 +689,9 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
     if (!sceneRef.current.scene || !introPlayed) return;
     if (frameIdx !== prevFrameRef.current) {
       setExploded(false);
-      buildGlasses(frameIdx, colorIdx, matIdx, true);
+      const shouldAnimate = !skipAnimRef.current;
+      skipAnimRef.current = false;
+      buildGlasses(frameIdx, colorIdx, matIdx, shouldAnimate);
     } else { 
       applyMaterials(); 
     }
@@ -729,7 +717,6 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       camera.position.set(0, 0, 5);
       camera.lookAt(0, 0, 0);
 
-      // Flat white silhouette material
       const silMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
 
       const f = FRAMES[frameIdx];
@@ -775,7 +762,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       scene.traverse(ch => { if (ch.geometry) ch.geometry.dispose(); });
     };
 
-    setDiagramDataUrl(null); // show loading state while rendering
+    setDiagramDataUrl(null);
     renderSilhouette();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -824,6 +811,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       @keyframes gvShine { 0% { left:-100% } 100% { left:200% } }
       @keyframes gvSpin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
       @keyframes gvLabelIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
+      @keyframes gvScanPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(111,207,151,0.4) } 50% { box-shadow: 0 0 0 8px rgba(111,207,151,0) } }
       .gv-nav-links { display: flex; gap: 32px; }
       .gv-hamburger { display: none !important; }
       .gv-main { flex-direction: row !important; }
@@ -842,6 +830,10 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       @keyframes gvDrawLine { to { stroke-dashoffset: 0 } }
       .gv-next:hover { background: #fff !important; color: #000 !important; }
       .gv-back:hover { background: rgba(255,255,255,0.1) !important; }
+      .gv-scan-cta { transition: all 0.4s cubic-bezier(0.23,1,0.32,1) !important; }
+      .gv-scan-cta:hover { transform: translateY(-3px) !important; box-shadow: 0 8px 32px rgba(111,207,151,0.25) !important; border-color: rgba(111,207,151,0.5) !important; }
+      .gv-ar-cta { transition: all 0.4s cubic-bezier(0.23,1,0.32,1) !important; }
+      .gv-ar-cta:hover { transform: translateY(-3px) !important; box-shadow: 0 8px 32px rgba(78,205,196,0.2) !important; border-color: rgba(78,205,196,0.4) !important; }
       @media (max-width: 840px) {
         .gv-nav-links { display: none !important; }
         .gv-hamburger { display: flex !important; }
@@ -885,7 +877,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             {[
               { label: "Configurator", action: () => { setPage("configurator"); setStep(0); }, active: page === "configurator" },
               { label: "AR Try-On", action: () => { setPage("ar"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "ar" },
-              { label: "AI Fit Scanner", action: () => { setPage("scanner"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
+              { label: "AI Fit Scanner", action: () => { setScanReturnStep(null); setPage("scanner"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
               { label: "Our Impact", action: () => { setPage("impact"); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "impact" },
             ].map(item => (
               <button key={item.label} className="gv-nav-link" onClick={item.action || undefined}
@@ -903,7 +895,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
             {[
               { label: "Configurator", action: () => { setPage("configurator"); setStep(0); setMenuOpen(false); }, active: page === "configurator" },
               { label: "AR Try-On", action: () => { setPage("ar"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "ar" },
-              { label: "AI Fit Scanner", action: () => { setPage("scanner"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
+              { label: "AI Fit Scanner", action: () => { setScanReturnStep(null); setPage("scanner"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "scanner" },
               { label: "Our Impact", action: () => { setPage("impact"); setMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }, active: page === "impact" },
             ].map(item => (
               <button key={item.label} onClick={item.action}
@@ -927,23 +919,15 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
                   const cx = containerW / 2;
                   const cy = containerH / 2;
                   const angle = Math.atan2(lp.y - cy, lp.x - cx);
-
-                  // Raw label endpoint pushed outward from center
                   const rawLx = lp.x + Math.cos(angle) * labelOffset;
                   const rawLy = lp.y + Math.sin(angle) * labelOffset;
-
-                  // Clamp endpoint so the dot never exits the viewport
                   const edgePad = 8;
                   const lx = Math.max(edgePad, Math.min(containerW - edgePad, rawLx));
                   const ly = Math.max(edgePad, Math.min(containerH - edgePad, rawLy));
-
-                  // Flip text anchor when near an edge so text always has room
-                  // approxTextW covers the longest label + 10px offset
                   const approxTextW = 115;
                   const ta = (containerW - lx < approxTextW) ? "end"
                            : (lx < approxTextW)              ? "start"
                            : (rawLx > cx ? "start" : "end");
-
                   const tx = lx + (ta === "start" ? 10 : -10);
                   return (
                     <g key={lp.name} style={{ animation: `gvLabelIn 0.5s ease ${0.1 * i}s both` }}>
@@ -995,6 +979,93 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
           <div key={step} style={{ animation: "gvFadeUp 0.35s ease both", flex: 1 }}>
 
             {step === 0 && (<>
+              <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Let's find your perfect fit</h2>
+              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 24px", lineHeight: 1.6 }}>Our AI measures your face in seconds and recommends the ideal frame style and size. No optician needed.</p>
+
+              {/* ── AI Face Scan CTA ── */}
+              <button
+                className="gv-scan-cta"
+                onClick={() => {
+                  setScanReturnStep(1);
+                  setPage("scanner");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                style={{
+                  width: "100%", padding: "28px 24px", borderRadius: 20, cursor: "pointer",
+                  background: "linear-gradient(135deg, rgba(111,207,151,0.1) 0%, rgba(78,205,196,0.06) 100%)",
+                  border: "1px solid rgba(111,207,151,0.25)",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center",
+                  marginBottom: 20, position: "relative", overflow: "hidden",
+                }}
+              >
+                <div style={{
+                  width: 72, height: 72, borderRadius: 20, flexShrink: 0,
+                  background: "rgba(111,207,151,0.1)", border: "1px solid rgba(111,207,151,0.2)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  animation: "gvScanPulse 2.5s ease-in-out infinite",
+                }}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6fcf97" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 3H5a2 2 0 0 0-2 2v2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                    <path d="M7 21H5a2 2 0 0 1-2-2v-2" /><path d="M17 21h2a2 2 0 0 0 2-2v-2" />
+                    <circle cx="12" cy="10" r="3" /><path d="M12 13c-3 0-5 1.5-5 3v1h10v-1c0-1.5-2-3-5-3z" />
+                  </svg>
+                </div>
+                <div>
+                  <span style={{ fontSize: 18, fontWeight: 600, color: "#fff", display: "block", marginBottom: 6 }}>Scan Your Face</span>
+                  <p style={{ margin: 0, fontSize: 12, opacity: 0.45, lineHeight: 1.5, color: "#fff", maxWidth: 280 }}>
+                    10-second AI scan using MediaPipe. Recommends the best frame shape and size for your face.
+                  </p>
+                </div>
+                {calibratedFaceWidth && (
+                  <div style={{
+                    position: "absolute", top: 12, right: 14,
+                    fontSize: 9, padding: "3px 10px", borderRadius: 6,
+                    background: "rgba(111,207,151,0.15)", border: "1px solid rgba(111,207,151,0.25)",
+                    color: "#6fcf97", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
+                  }}>
+                    Scanned: {calibratedFaceWidth}mm
+                  </div>
+                )}
+              </button>
+
+              {/* How it works */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+                {[
+                  { icon: "◎", title: "Detect", desc: "468 facial landmarks tracked in real-time" },
+                  { icon: "⊡", title: "Measure", desc: "Face width, bridge, and proportions calculated" },
+                  { icon: "◈", title: "Match", desc: "AI picks the best frame and size for you" },
+                ].map((s, i) => (
+                  <div key={i} style={{
+                    padding: "14px 12px", borderRadius: 12, textAlign: "center",
+                    background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
+                  }}>
+                    <span style={{ fontSize: 18, display: "block", marginBottom: 6, opacity: 0.5 }}>{s.icon}</span>
+                    <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600 }}>{s.title}</p>
+                    <p style={{ margin: 0, fontSize: 10, opacity: 0.35, lineHeight: 1.4 }}>{s.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Skip option */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
+                <span style={{ fontSize: 10, opacity: 0.25, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600, flexShrink: 0 }}>or</span>
+                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
+              </div>
+              <button
+                onClick={() => setStep(1)}
+                style={{
+                  width: "100%", padding: "14px 0", borderRadius: 10, cursor: "pointer",
+                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                  color: "rgba(255,255,255,0.5)", fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 12, fontWeight: 500, letterSpacing: 1.5, textTransform: "uppercase",
+                }}
+              >
+                Skip, choose manually
+              </button>
+            </>)}
+
+            {step === 1 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Choose your frame</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 16px" }}>Each frame is 3D printed from recycled materials to your exact specs.</p>
               <div style={{ height: menuHeight, maxHeight: isSmall ? 320 : 460, position: "relative", borderRadius: 16, overflow: "hidden", border: "1px solid rgba(255,255,255,0.06)" }}>
@@ -1003,7 +1074,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               <p style={{ fontSize: 10, opacity: 0.2, marginTop: 10, textAlign: "center", letterSpacing: 1.5, textTransform: "uppercase" }}>{isMobile ? "Tap to select" : "Hover to preview · Click to select"}</p>
             </>)}
 
-            {step === 1 && (<>
+            {step === 2 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Pick your material</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>All materials are sourced from post-consumer waste. Zero virgin plastic.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1026,7 +1097,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               </div>
             </>)}
 
-{step === 2 && (<>
+{step === 3 && (<>
   <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Select your lens</h2>
   <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 14px" }}>All lenses are scratch-resistant polycarbonate with UV400 protection.</p>
   <LensPicker
@@ -1037,7 +1108,7 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
   />
 </>)}
 
-            {step === 3 && (<>
+            {step === 4 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Choose your colour</h2>
               <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 14px" }}>
                 {frame.url ? "Tints applied over the original design." : "Pigment mixed into the filament before printing."}
@@ -1051,10 +1122,11 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               />
             </>)}
 
-            {step === 4 && (<>
+            {/* STEP 5: SIZE */}
+            {step === 5 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Select your size</h2>
-              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 8px" }}>3D printing means every pair can be made to measure. Pick your starting point.</p>
-              <p style={{ fontSize: 11, opacity: 0.25, margin: "0 0 20px" }}>In a future update, our AI face scanner will recommend the perfect fit automatically.</p>
+              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 16px" }}>3D printing means every pair can be made to measure.</p>
+
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {SIZES.map((sz, i) => (
                   <OptCard key={sz.id} selected={sizeIdx === i} onClick={() => setSizeIdx(i)}>
@@ -1069,7 +1141,6 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               </div>
               {/* ── Silhouette diagram ── */}
               <div style={{ marginTop: 16, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", overflow: "hidden" }}>
-                {/* Image area */}
                 <div style={{ position: "relative", padding: "12px 0 4px", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 110 }}>
                   {diagramDataUrl ? (
                     <img
@@ -1092,7 +1163,6 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
                     </div>
                   )}
                 </div>
-                {/* Dimension labels */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: "1px solid rgba(255,255,255,0.04)", padding: "10px 0" }}>
                   {[
                     { label: "Lens", val: frame.dimensions.lens },
@@ -1108,28 +1178,89 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
               </div>
             </>)}
 
-            {step === 5 && (<>
+            {/* STEP 6: SUMMARY — with AR Try-On CTA */}
+            {step === 6 && (<>
               <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 22 : 26, fontWeight: 500, margin: "0 0 6px" }}>Your custom pair</h2>
-              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 20px" }}>Review your configuration before ordering.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
-                {[["Frame", frame.name, <span className="gv-price-val"><span className="gv-currency" style={{ fontSize: "0.9em", top: "-0.02em" }}>₱</span>{frame.basePrice.toLocaleString()}</span>],["Material", `${material.name} (${material.tag})`, material.price === 0 ? "included" : <span className="gv-price-val"><span className="gv-currency" style={{ fontSize: "0.9em", top: "-0.02em" }}>+₱</span>{material.price.toLocaleString()}</span>],["Lens", lens.name, lens.price === 0 ? "included" : <span className="gv-price-val"><span className="gv-currency" style={{ fontSize: "0.9em", top: "-0.02em" }}>+₱</span>{lens.price.toLocaleString()}</span>],["Colour", color.name, "included"],["Size", `${size.name} (${size.width})`, "included"]].map(([label, value, price], i) => (
-                  <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isSmall ? "10px 12px" : "12px 16px", background: i % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)", gap: 8 }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <span style={{ fontSize: 10, opacity: 0.35, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</span>
-                      <p style={{ margin: "2px 0 0", fontSize: isSmall ? 12 : 14, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis" }}>{value}</p>
-                    </div>
-                    <span style={{ fontSize: 13, opacity: 0.5, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{price}</span>
+              <p style={{ fontSize: 13, opacity: 0.4, margin: "0 0 16px" }}>Review your configuration before ordering.</p>
+
+              {/* ── Compact build summary ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "6px 14px", padding: "14px 18px", borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", marginBottom: 14, alignItems: "baseline" }}>
+                {[
+                  ["Frame", <>{frame.name} <span style={{ opacity: 0.35, fontSize: 11 }}>{color.name}</span></>, <span className="gv-price-val" style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.5, fontSize: 11 }}><span className="gv-currency" style={{ fontSize: "0.85em" }}>₱</span>{frame.basePrice.toLocaleString()}</span>],
+                  ["Material", <>{material.name} <span style={{ opacity: 0.35, fontSize: 11 }}>{material.tag}</span></>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.5, fontSize: 11 }}>{material.price === 0 ? "incl." : `+₱${material.price}`}</span>],
+                  ["Lens", <>{lens.name}</>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.5, fontSize: 11 }}>{lens.price === 0 ? "incl." : `+₱${lens.price}`}</span>],
+                  ["Size", <>{size.name} <span style={{ opacity: 0.35, fontSize: 11 }}>{size.width}</span></>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.5, fontSize: 11 }}>incl.</span>],
+                ].map(([label, value, price], i) => (
+                  <div key={i} style={{ display: "contents" }}>
+                    <span style={{ fontSize: 10, opacity: 0.3, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap", paddingTop: 1 }}>{label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{value}</span>
+                    <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>{price}</span>
                   </div>
                 ))}
               </div>
-              <div style={{ padding: "16px 20px", borderRadius: 12, background: "rgba(111,207,151,0.06)", border: "1px solid rgba(111,207,151,0.15)", marginBottom: 20 }}>
-                <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 600, color: "#6fcf97", letterSpacing: 1, textTransform: "uppercase" }}>Environmental Impact</p>
-                <p style={{ margin: 0, fontSize: 13, opacity: 0.6, lineHeight: 1.6 }}>Your pair uses approximately 15g of recycled plastic, diverting ~12 bottle caps from landfill. {material.co2}.</p>
+
+              {/* ── Environmental + total row ── */}
+              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                <div style={{ flex: 1, padding: "12px 14px", borderRadius: 12, background: "rgba(111,207,151,0.05)", border: "1px solid rgba(111,207,151,0.12)" }}>
+                  <p style={{ margin: 0, fontSize: 10, fontWeight: 600, color: "#6fcf97", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Impact</p>
+                  <p style={{ margin: 0, fontSize: 11, opacity: 0.45, lineHeight: 1.5 }}>~15g recycled plastic, 12 bottle caps diverted. {material.co2}.</p>
+                </div>
+                <div style={{ flexShrink: 0, padding: "12px 20px", borderRadius: 12, background: "rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                  <p style={{ margin: 0, fontSize: 10, opacity: 0.3 }}>Total</p>
+                  <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: isSmall ? 24 : 28, fontWeight: 600 }} className="gv-price-val"><span className="gv-currency">₱</span>{totalPrice.toLocaleString()}</p>
+                </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderRadius: 12, background: "rgba(255,255,255,0.06)", marginBottom: 20 }}>
-                <span style={{ fontSize: 14, fontWeight: 500 }}>Total</span>
-                <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, fontWeight: 600 }} className="gv-price-val"><span className="gv-currency">₱</span>{totalPrice.toLocaleString()}</span>
-              </div>
+
+              {/* ── AR Try-On — prominent ── */}
+              <button
+                className="gv-ar-cta"
+                onClick={() => {
+                  setPage("ar");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                style={{
+                  width: "100%", padding: "18px 20px", borderRadius: 14, cursor: "pointer",
+                  background: "linear-gradient(135deg, rgba(78,205,196,0.12) 0%, rgba(111,207,151,0.08) 100%)",
+                  border: "1.5px solid rgba(78,205,196,0.3)",
+                  display: "flex", alignItems: "center", gap: 14, textAlign: "left",
+                  marginBottom: 14, position: "relative", overflow: "hidden",
+                }}
+              >
+                {/* Shimmer sweep */}
+                <div style={{
+                  position: "absolute", inset: 0, pointerEvents: "none",
+                  background: "linear-gradient(105deg, transparent 40%, rgba(78,205,196,0.08) 50%, transparent 60%)",
+                  backgroundSize: "200% 100%",
+                  animation: "gvShine 4s ease-in-out infinite",
+                }} />
+                <div style={{
+                  width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+                  background: "rgba(78,205,196,0.15)", border: "1px solid rgba(78,205,196,0.3)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ecdc4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+                    <circle cx="9" cy="10" r="2" /><circle cx="15" cy="10" r="2" /><line x1="11" y1="10" x2="13" y2="10" />
+                  </svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                    <span style={{ fontSize: 15, fontWeight: 600, color: "#fff" }}>Try on with AR</span>
+                    <span style={{
+                      fontSize: 8, padding: "2px 8px", borderRadius: 4,
+                      background: "rgba(78,205,196,0.15)", border: "1px solid rgba(78,205,196,0.3)",
+                      color: "#4ecdc4", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase",
+                    }}>Live</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 11, opacity: 0.4, color: "#fff" }}>
+                    See how they look on your face before you buy
+                  </p>
+                </div>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(78,205,196,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", zIndex: 1 }}>
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+
               <button className="gv-cta" style={{ width: "100%", padding: "18px 0", background: "rgba(255,255,255,0.92)", color: "#000", border: "none", borderRadius: 12, fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", cursor: isCheckingOut ? "wait" : "pointer", transition: "all 0.4s cubic-bezier(0.23,1,0.32,1)", opacity: isCheckingOut ? 0.7 : 1 }} onClick={handleCheckout} disabled={isCheckingOut}>{isCheckingOut ? "Preparing Checkout..." : "Order Custom Pair"}</button>
             </>)}
           </div>
@@ -1146,8 +1277,8 @@ const state = { isDragging: false, prevX: 0, prevY: 0, velX: 0, velY: 0, targetR
       </div>
 
       {page === "impact" && (<div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}><ImpactPage /></div>)}
-      {page === "scanner" && (<div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}><FitScanner onApplyFit={({ fIdx, sIdx, faceWidth }) => { setFrameIdx(fIdx); setColorIdx(0); setSizeIdx(sIdx); setCalibratedFaceWidth(faceWidth); setStep(5); setPage("configurator"); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></div>)}
-      {page === "ar" && (<div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}><ARTryOn faceWidth={calibratedFaceWidth} onBack={() => { setPage("configurator"); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></div>)}
+      {page === "scanner" && (<div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}><FitScanner onApplyFit={({ frameIdx: fIdx, sizeIdx: sIdx, faceWidth }) => { skipAnimRef.current = true; setFrameIdx(fIdx); setColorIdx(0); setSizeIdx(sIdx); setCalibratedFaceWidth(faceWidth); setStep(scanReturnStep != null ? scanReturnStep : 1); setScanReturnStep(null); setPage("configurator"); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></div>)}
+      {page === "ar" && (<div style={{ position: "relative", zIndex: 2, flex: 1, width: "100%" }}><ARTryOn faceWidth={calibratedFaceWidth} onBack={() => { setPage("configurator"); setStep(6); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></div>)}
 
       <footer style={{ padding: isSmall ? "16px 12px" : 20, textAlign: "center", fontSize: 10, letterSpacing: 3, opacity: 0.2, textTransform: "uppercase", display: "flex", gap: isSmall ? 8 : 16, justifyContent: "center", flexWrap: "wrap", borderTop: "1px solid rgba(255,255,255,0.03)", marginTop: "auto", position: "relative", zIndex: 2 }}>
         <span>OPTIQ © 2026</span><span>·</span><span>Recycled eyewear, 3D printed for you</span>
