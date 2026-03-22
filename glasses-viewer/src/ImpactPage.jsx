@@ -211,11 +211,11 @@ export default function ImpactPage() {
             }}>
               <p style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", opacity: 0.4, margin: "0 0 16px", fontWeight: 600, color: "#ff6b6b" }}>Traditional Eyewear</p>
               {[
-                ["Frame manufacturing", "₱2,500"],
-                ["Lens grinding", "₱3,500"],
-                ["Retail markup", "₱4,500"],
-                ["Optician visit", "₱1,000"],
-                ["Total", "₱11,500"],
+                ["Frame manufacturing", "₱800"],
+                ["Lens grinding", "₱500"],
+                ["Retail markup", "₱400"],
+                ["Optician visit", "₱300"],
+                ["Total", "₱2,000"],
               ].map(([label, cost], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < 4 ? "1px solid rgba(255,255,255,0.04)" : "none", opacity: i === 4 ? 1 : 0.5 }}>
                   <span style={{ fontSize: 13, fontWeight: i === 4 ? 600 : 400 }}>{label}</span>
@@ -249,7 +249,7 @@ export default function ImpactPage() {
 
         <AnimatedContent delay={0.35}>
           <p style={{ fontSize: 13, opacity: 0.3, marginTop: 16, textAlign: "center" }}>
-            Up to 93% cost reduction. No middlemen, no retail markup, no waste.
+            Up to 85% cost reduction. No middlemen, no retail markup, no waste.
           </p>
         </AnimatedContent>
       </section>
