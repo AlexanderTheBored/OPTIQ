@@ -300,6 +300,19 @@ export default function GlassesViewer() {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [scanReturnStep, setScanReturnStep] = useState(null);
 
+  useEffect(() => {
+    const handleNav = (e) => {
+      const targetPage = e.detail;
+      if (['configurator', 'ar', 'scanner', 'impact'].includes(targetPage)) {
+        if (targetPage === 'configurator') setStep(0);
+        setPage(targetPage);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    };
+    window.addEventListener('ai-navigate', handleNav);
+    return () => window.removeEventListener('ai-navigate', handleNav);
+  }, []);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState("configurator");
   const [loaded, setLoaded] = useState(false);
