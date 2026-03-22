@@ -687,7 +687,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     if (!container) return;
 
     const isMobile = window.matchMedia("(max-width: 840px)").matches || /Mobi|Android/i.test(navigator.userAgent);
-    const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true, powerPreference: "high-performance" });
+    const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -898,17 +898,44 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array ensures this runs exactly once on mount
   
-  /* ── capture photo ── */
   const handleCapture = useCallback(() => {
     const vCanvas = videoCanvasRef.current;
     const { renderer } = sceneRef.current;
     if (!vCanvas || !renderer) return;
 
+    const cw = vCanvas.clientWidth;
+    const ch = vCanvas.clientHeight;
+    
+    // We match the visible container proportions to avoid squashing
+    const scale = window.devicePixelRatio || 2;
     const offscreen = document.createElement("canvas");
-    offscreen.width = vCanvas.clientWidth * 2;
-    offscreen.height = vCanvas.clientHeight * 2;
+    offscreen.width = cw * scale;
+    offscreen.height = ch * scale;
     const ctx = offscreen.getContext("2d");
-    ctx.drawImage(vCanvas, 0, 0, offscreen.width, offscreen.height);
+    
+    // Simulate 'object-fit: cover' for the video frame being drawn
+    const vw = vCanvas.width;
+    const vh = vCanvas.height;
+    const containerAspect = cw / ch;
+    const videoAspect = vw / vh;
+    
+    let sx, sy, sw, sh;
+    if (videoAspect > containerAspect) {
+      // Video is wider than container natively, crop sides
+      sh = vh;
+      sw = vh * containerAspect;
+      sx = (vw - sw) / 2;
+      sy = 0;
+    } else {
+      // Video is taller than container natively, crop top/bottom
+      sw = vw;
+      sh = vw / containerAspect;
+      sx = 0;
+      sy = (vh - sh) / 2;
+    }
+    
+    ctx.drawImage(vCanvas, sx, sy, sw, sh, 0, 0, offscreen.width, offscreen.height);
+    // Draw the 3D scene overlay
     ctx.drawImage(renderer.domElement, 0, 0, offscreen.width, offscreen.height);
 
     ctx.font = `${offscreen.width * 0.018}px "DM Sans", sans-serif`;
