@@ -388,12 +388,14 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     return idx < maxColors ? idx : 0;
   }, [initialColorIdx, resolvedInitialFrameIdx]);
 
-  const [status, setStatus] = useState("loading"); // Start as loading
+  const [status, setStatus] = useState("loading"); // Start loading immediately
   const [frameIdx, setFrameIdx] = useState(resolvedInitialFrameIdx);
   const [colorIdx, setColorIdx] = useState(resolvedInitialColorIdx);
   const [faceDetected, setFaceDetected] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
   const [cameraError, setCameraError] = useState(null);
+  const [arConfirmed, setArConfirmed] = useState(false);
+  const [showReadyOverlay, setShowReadyOverlay] = useState(true);
 
   /* ── Refs that always reflect current state (used in stable callbacks) ── */
   const frameIdxRef = useRef(frameIdx);
@@ -588,8 +590,20 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     });
   }, []);
 
+  /* ── Effect: build glasses when user dismisses the ready overlay ── */
+  useEffect(() => {
+    if (showReadyOverlay) return;
+    if (status !== "live" && status !== "captured") return;
+    if (!sceneRef.current.scene || !sceneRef.current.glassesParent) return;
+
+    buildGlasses(frameIdxRef.current, colorIdxRef.current);
+    prevFrameIdxRef.current = frameIdxRef.current;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showReadyOverlay, status]);
+
   /* ── Effect: update model when frame/color changes ── */
   useEffect(() => {
+    if (showReadyOverlay) return;
     if (status !== "live" && status !== "captured") return;
     if (!sceneRef.current.scene || !sceneRef.current.glassesParent) return;
 
@@ -600,7 +614,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
     } else {
       updateGlassesColor(frameIdx, colorIdx);
     }
-  }, [frameIdx, colorIdx, buildGlasses, updateGlassesColor, status]);
+  }, [frameIdx, colorIdx, buildGlasses, updateGlassesColor, status, showReadyOverlay]);
 
   /* ── initialize MediaPipe (only once, cached in ref) ── */
   const initFaceLandmarker = useCallback(async () => {
@@ -856,7 +870,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
       try {
         setStatus("loading");
-        
+
         const okModel = await initFaceLandmarker();
         if (!active || !okModel) {
           throw new Error("Failed to load AI model.");
@@ -867,14 +881,13 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
 
         const container = threeContainerRef.current;
         if (!container) return;
-        
+
         const video = videoRef.current;
         const displayW = container.clientWidth || (video && video.videoWidth) || 640;
         const displayH = container.clientHeight || (video && video.videoHeight) || 480;
 
         initThreeJS(displayW, displayH);
-        buildGlasses(frameIdxRef.current, colorIdxRef.current);
-        prevFrameIdxRef.current = frameIdxRef.current;
+        // Don't build glasses yet — wait until user dismisses the ready overlay
 
         if (active) {
           setStatus("live");
@@ -1005,6 +1018,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
         aspectRatio: "4/3", borderRadius: 20, overflow: "hidden",
         background: "#0a0a0c", border: "1px solid rgba(255,255,255,0.06)",
         boxShadow: "0 8px 60px rgba(0,0,0,0.4)",
+        display: "block",
       }}>
         <video ref={videoRef} playsInline muted style={{ display: "none" }} />
 
@@ -1057,8 +1071,111 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
           </div>
         )}
 
+        {/* ── READY OVERLAY: appears over camera feed, like FitScanner ── */}
+        {status === "live" && showReadyOverlay && (
+          <div style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "flex-end", padding: "24px 24px 28px",
+            background: "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.75) 100%)",
+            zIndex: 5,
+          }}>
+            {/* top badge */}
+            <div style={{
+              position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "6px 14px", borderRadius: 8,
+              background: "rgba(78,205,196,0.12)", border: "1px solid rgba(78,205,196,0.3)",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ecdc4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <circle cx="9" cy="10" r="2" /><circle cx="15" cy="10" r="2" /><line x1="11" y1="10" x2="13" y2="10" />
+              </svg>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", color: "rgba(78,205,196,0.9)" }}>
+                AR Try-On Ready
+              </span>
+            </div>
+
+            <div style={{
+              width: "100%", padding: "18px 20px", borderRadius: 14,
+              background: "rgba(0,0,0,0.6)", backdropFilter: "blur(12px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              display: "flex", flexDirection: "column", gap: 14,
+            }}>
+              <div>
+                <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 6px", color: "rgba(255,255,255,0.9)" }}>
+                  Before we start
+                </p>
+                <p style={{ fontSize: 12, lineHeight: 1.6, opacity: 0.6, margin: 0 }}>
+                  For the best experience, make sure you're in a <strong style={{ color: "rgba(78,205,196,0.9)", fontWeight: 600 }}>well-lit area</strong> with
+                  even lighting on your face. Remove any glasses you're currently wearing.
+                </p>
+              </div>
+
+              {/* checklist items */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {[
+                  "Good, even lighting (no harsh shadows)",
+                  "Glasses or sunglasses removed",
+                  "Face centred in the camera view",
+                ].map((item, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 10, color: "#4ecdc4", opacity: 0.8 }}>✓</span>
+                    <span style={{ fontSize: 11, opacity: 0.65 }}>{item}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* confirmation checkbox */}
+              <label style={{
+                display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+                padding: "10px 14px", borderRadius: 10,
+                background: arConfirmed ? "rgba(78,205,196,0.08)" : "rgba(255,255,255,0.03)",
+                border: arConfirmed ? "1px solid rgba(78,205,196,0.25)" : "1px solid rgba(255,255,255,0.06)",
+                transition: "all 0.3s",
+              }}>
+                <div style={{
+                  width: 20, height: 20, borderRadius: 6, flexShrink: 0,
+                  border: arConfirmed ? "2px solid #4ecdc4" : "2px solid rgba(255,255,255,0.2)",
+                  background: arConfirmed ? "rgba(78,205,196,0.2)" : "transparent",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all 0.3s",
+                }}>
+                  {arConfirmed && <span style={{ fontSize: 12, color: "#4ecdc4", lineHeight: 1 }}>✓</span>}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={arConfirmed}
+                  onChange={(e) => setArConfirmed(e.target.checked)}
+                  style={{ display: "none" }}
+                />
+                <span style={{ fontSize: 12, fontWeight: 500, opacity: arConfirmed ? 0.9 : 0.7 }}>
+                  I'm ready to try on glasses
+                </span>
+              </label>
+
+              {/* begin button */}
+              <button
+                onClick={() => setShowReadyOverlay(false)}
+                disabled={!arConfirmed}
+                style={{
+                  padding: "14px 0", borderRadius: 10, border: "none",
+                  cursor: arConfirmed ? "pointer" : "not-allowed",
+                  background: arConfirmed ? "rgba(78,205,196,0.9)" : "rgba(78,205,196,0.2)",
+                  color: arConfirmed ? "#000" : "rgba(0,0,0,0.3)",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600,
+                  letterSpacing: 1.5, textTransform: "uppercase",
+                  transition: "all 0.3s", width: "100%",
+                  opacity: arConfirmed ? 1 : 0.5,
+                }}
+              >
+                Begin Try-On
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Face guide */}
-        {status === "live" && !faceDetected && (
+        {status === "live" && !showReadyOverlay && !faceDetected && (
           <div style={{
             position: "absolute", inset: 0,
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10,
@@ -1077,7 +1194,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
         )}
 
         {/* Live indicator */}
-        {status === "live" && faceDetected && (
+        {status === "live" && !showReadyOverlay && faceDetected && (
           <div style={{
             position: "absolute", top: 14, left: 14,
             display: "flex", alignItems: "center", gap: 6,
@@ -1092,7 +1209,7 @@ export default function ARTryOn({ onBack, faceWidth, initialFrameId, initialColo
         )}
 
         {/* Current frame badge */}
-        {status === "live" && faceDetected && (
+        {status === "live" && !showReadyOverlay && faceDetected && (
           <div style={{
             position: "absolute", top: 14, right: 14,
             padding: "5px 12px", borderRadius: 8,
