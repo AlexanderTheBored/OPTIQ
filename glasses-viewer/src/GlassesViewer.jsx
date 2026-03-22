@@ -27,9 +27,10 @@ const STEP_ANGLES = [
   { x: deg(8),   y: deg(25),  z: 2.85 }, // 1 Frame    — classic 3/4, temples visible
   { x: deg(12),  y: deg(-18), z: 3.0  }, // 2 Material — slight top-left, rim texture catches light
   { x: deg(0),   y: deg(4),   z: 2.55 }, // 3 Lens     — nearly face-on, lens occupies frame
-  { x: deg(6),   y: deg(-38), z: 2.75 }, // 4 Colour   — wide swing right, side profile, pigment shows
-  { x: deg(-8),  y: deg(18),  z: 3.1  }, // 5 Size     — low angle, full silhouette readable
-  { x: deg(10),  y: deg(10),  z: 2.45 }, // 6 Summary  — tight close hero, symmetrical and confident
+  { x: deg(3),   y: deg(10),  z: 2.65 }, // 4 Prescription — gentle angle, lens detail visible
+  { x: deg(6),   y: deg(-38), z: 2.75 }, // 5 Colour   — wide swing right, side profile, pigment shows
+  { x: deg(-8),  y: deg(18),  z: 3.1  }, // 6 Size     — low angle, full silhouette readable
+  { x: deg(10),  y: deg(10),  z: 2.45 }, // 7 Summary  — tight close hero, symmetrical and confident
 ];
 
 if (typeof document !== "undefined") {
@@ -1318,7 +1319,10 @@ export default function GlassesViewer() {
                   ["Frame", <>{frame.name} <span style={{ opacity: 0.55, fontSize: 11 }}>{color.name}</span></>, <span className="gv-price-val" style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}><span className="gv-currency" style={{ fontSize: "0.85em" }}>₱</span>{frame.basePrice.toLocaleString()}</span>],
                   ["Material", <>{material.name} <span style={{ opacity: 0.55, fontSize: 11 }}>{material.tag}</span></>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}>{material.price === 0 ? "incl." : `+₱${material.price}`}</span>],
                   ["Lens", <>{lens.name}</>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}>{lens.price === 0 ? "incl." : `+₱${lens.price}`}</span>],
-                  ["Rx", <>{(() => { const rx = differentPerEye ? rxOD : rxBoth; return rx.visionType ? <>{rx.visionType.split(" (")[0]} <span style={{ opacity: 0.55, fontSize: 11 }}>{rx.grade ? rx.grade.split(" (")[0] : ""}{rx.astigmatism && rx.astigmatism !== "None" ? ` · Astig.` : ""}</span></> : <span style={{ opacity: 0.55 }}>Not provided</span>; })()}</>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}>{differentPerEye ? "OD/OS" : "—"}</span>],
+                  ["Rx", (differentPerEye ? rxOD : rxBoth).visionType
+                    ? <>{(differentPerEye ? rxOD : rxBoth).visionType.split(" (")[0]} <span style={{ opacity: 0.55, fontSize: 11 }}>{(differentPerEye ? rxOD : rxBoth).grade ? (differentPerEye ? rxOD : rxBoth).grade.split(" (")[0] : ""}{(differentPerEye ? rxOD : rxBoth).astigmatism && (differentPerEye ? rxOD : rxBoth).astigmatism !== "None" ? " · Astig." : ""}</span></>
+                    : <span style={{ opacity: 0.55 }}>Not provided</span>,
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}>{differentPerEye ? "OD/OS" : "—"}</span>],
                   ["Size", <>{size.name} <span style={{ opacity: 0.55, fontSize: 11 }}>{size.width}</span></>, <span style={{ fontFamily: "'JetBrains Mono', monospace", opacity: 0.7, fontSize: 11 }}>incl.</span>],
                 ].map(([label, value, price], i) => (
                   <div key={i} style={{ display: "contents" }}>
