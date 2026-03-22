@@ -375,12 +375,11 @@ export default function FitScanner({ onApplyFit }) {
         /* face height */
         drawLine(LANDMARK.foreheadTop, LANDMARK.chinBottom, "rgba(168,237,234,0.4)");
 
-        /* subtle face mesh dots */
-        landmarks.forEach((lm, i) => {
-          if (i % 6 !== 0) return;
+        /* face mesh dots */
+        landmarks.forEach((lm) => {
           ctx.beginPath();
-          ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 1, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255,255,255,0.15)";
+          ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 1.8, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(111,207,151,0.6)";
           ctx.fill();
         });
 
