@@ -348,9 +348,9 @@ export default function ImpactPage() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
           {[
-            { icon: "◇", title: "Submit", desc: "Fill out a recycling request form with your lens details — type, grade, and condition. We'll send you a prepaid shipping label." },
-            { icon: "◎", title: "Assess", desc: "Our team inspects each lens for reusable coatings and materials. Salvageable optics are separated from the polycarbonate base." },
-            { icon: "⟳", title: "Recover", desc: "Polycarbonate is ground down and reprocessed. Optical coatings that pass quality checks are reclaimed for use in new lenses." },
+            { num: "01", icon: "◇", title: "Submit", desc: "Fill out a recycling request form with your lens details — type, grade, and condition. We'll send you a prepaid shipping label." },
+            { num: "02", icon: "◎", title: "Assess", desc: "Our team inspects each lens for reusable coatings and materials. Salvageable optics are separated from the polycarbonate base." },
+            { num: "03", icon: "♻", title: "Recover", desc: "Polycarbonate is ground down and reprocessed. Optical coatings that pass quality checks are reclaimed for use in new lenses." },
           ].map((step, i) => (
             <AnimatedContent key={i} delay={i * 0.1} style={{ display: "flex", height: "100%" }}>
               <div style={{
@@ -358,7 +358,10 @@ export default function ImpactPage() {
                 background: "rgba(111,207,151,0.03)", border: "1px solid rgba(111,207,151,0.08)",
                 display: "flex", flexDirection: "column",
               }}>
-                <span style={{ fontSize: 28, marginBottom: 12 }}>{step.icon}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "rgba(111,207,151,0.6)" }}>{step.num}</span>
+                  <span style={{ fontSize: 16, opacity: 0.5 }}>{step.icon}</span>
+                </div>
                 <p style={{ fontSize: 15, fontWeight: 600, margin: "0 0 8px" }}>{step.title}</p>
                 <p style={{ fontSize: 13, lineHeight: 1.7, opacity: 0.6, margin: 0 }}>{step.desc}</p>
               </div>
